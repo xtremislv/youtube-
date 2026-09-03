@@ -1,0 +1,1097 @@
+import React, { useState, useMemo, useRef, useEffect, useCallback } from "react";
+import svgPaths from "imports/svg-siexpc9d1x";
+import {
+  fetchChannels,
+  fetchCohorts,
+  fetchVideos,
+  fetchSystemStatus,
+  createChannel,
+  deleteChannel,
+  updateChannel,
+  ApiError,
+  type ApiChannel as Channel,
+  type ApiVideo as Video,
+  type CohortSummary,
+  type SystemStatus,
+} from "@/lib/api";
+
+// ─── Types ───────────────────────────────────────────────────────────────────
+// Channel/Video are now the live API shapes (see src/lib/api.ts) — this file
+// used to define its own Channel/Video interfaces around a hardcoded mock
+// array. The API's CamelModel schemas were written to match those old mock
+// shapes field-for-field, so almost nothing else in this file had to change.
+
+type Platform = "youtube" | "instagram" | "all";
+type ViewMode = "grid" | "list";
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function fmtViews(n: number) {
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + "M";
+  if (n >= 1_000) return (n / 1_000).toFixed(0) + "K";
+  return String(n);
+}
+
+/** Same as fmtViews but tolerates the "not enough history yet" null a brand-new channel's baseline can be. */
+function fmtViewsN(n: number | null | undefined) {
+  return n == null ? "—" : fmtViews(n);
+}
+
+function fmtRatio(n: number | null | undefined) {
+  return n == null ? "—" : n.toFixed(2) + "x";
+}
+
+function fmtDate(d: string) {
+  return new Date(d).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+
+function currentMonthLabel() {
+  return new Date().toLocaleDateString("en-US", { month: "short", year: "numeric" });
+}
+
+// ─── Icons ────────────────────────────────────────────────────────────────────
+
+function YTIcon({ size = 14 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor">
+      <path d="M23.5 6.2s-.3-1.9-1.1-2.8c-1.1-1.2-2.3-1.2-2.8-1.2C16.7 2 12 2 12 2s-4.7 0-7.6.2c-.6.1-1.7.1-2.8 1.2C.8 4.3.5 6.2.5 6.2S.2 8.4.2 10.6v2.1c0 2.2.3 4.4.3 4.4s.3 1.9 1.1 2.8c1.1 1.2 2.5 1.1 3.1 1.2C6.7 21.3 12 21.3 12 21.3s4.7 0 7.6-.3c.6-.1 1.7-.1 2.8-1.2.8-.8 1.1-2.8 1.1-2.8s.3-2.2.3-4.4v-2.1c0-2.2-.3-4.4-.3-4.4zM9.7 15.5V8.3l7.6 3.6-7.6 3.6z" />
+    </svg>
+  );
+}
+
+function IGIcon({ size = 14 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor">
+      <path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zm0-2.163c-3.259 0-3.667.014-4.947.072-4.358.2-6.78 2.618-6.98 6.98-.059 1.281-.073 1.689-.073 4.948 0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98 1.281.058 1.689.072 4.948.072 3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98-1.281-.059-1.69-.073-4.949-.073zm0 5.838c-3.403 0-6.162 2.759-6.162 6.162s2.759 6.163 6.162 6.163 6.162-2.759 6.162-6.163c0-3.403-2.759-6.162-6.162-6.162zm0 10.162c-2.209 0-4-1.79-4-4 0-2.209 1.791-4 4-4s4 1.791 4 4c0 2.21-1.791 4-4 4zm6.406-11.845c-.796 0-1.441.645-1.441 1.44s.645 1.44 1.441 1.44c.795 0 1.439-.645 1.439-1.44s-.644-1.44-1.439-1.44z" />
+    </svg>
+  );
+}
+
+function BellIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
+      <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+    </svg>
+  );
+}
+
+function ChevronDown({ size = 12 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+      <polyline points="6 9 12 15 18 9" />
+    </svg>
+  );
+}
+
+function GridIcon() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <rect x="3" y="3" width="7" height="7" /><rect x="14" y="3" width="7" height="7" />
+      <rect x="14" y="14" width="7" height="7" /><rect x="3" y="14" width="7" height="7" />
+    </svg>
+  );
+}
+
+function ListIcon() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <line x1="8" y1="6" x2="21" y2="6" /><line x1="8" y1="12" x2="21" y2="12" />
+      <line x1="8" y1="18" x2="21" y2="18" />
+      <line x1="3" y1="6" x2="3.01" y2="6" /><line x1="3" y1="12" x2="3.01" y2="12" />
+      <line x1="3" y1="18" x2="3.01" y2="18" />
+    </svg>
+  );
+}
+
+function BarChartIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <line x1="18" y1="20" x2="18" y2="10" /><line x1="12" y1="20" x2="12" y2="4" />
+      <line x1="6" y1="20" x2="6" y2="14" /><line x1="2" y1="20" x2="22" y2="20" />
+    </svg>
+  );
+}
+
+function XIcon({ size = 10 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
+      <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+    </svg>
+  );
+}
+
+function MenuIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+      <line x1="3" y1="6" x2="21" y2="6" /><line x1="3" y1="12" x2="21" y2="12" />
+      <line x1="3" y1="18" x2="21" y2="18" />
+    </svg>
+  );
+}
+
+function TrendUpIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+      <polyline points="23 6 13.5 15.5 8.5 10.5 1 18" />
+      <polyline points="17 6 23 6 23 12" />
+    </svg>
+  );
+}
+
+function TrashIcon({ size = 12 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="3 6 5 6 21 6" />
+      <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+    </svg>
+  );
+}
+
+function PlusIcon({ size = 12 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+      <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
+    </svg>
+  );
+}
+
+// ─── Mini Sparkline ───────────────────────────────────────────────────────────
+
+function Sparkline({ ratio, color }: { ratio: number; color: string }) {
+  const pts = useMemo(() => {
+    const seed = ratio * 100;
+    const vals = [40, 55, 45, 70, 60, seed * 0.9, seed];
+    const max = Math.max(...vals);
+    return vals.map((v, i) => `${(i / (vals.length - 1)) * 60},${20 - (v / max) * 18}`).join(" ");
+  }, [ratio]);
+  return (
+    <svg width="60" height="20" viewBox="0 0 60 20">
+      <polyline points={pts} fill="none" stroke={color} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+// ─── Mini Donut Chart ─────────────────────────────────────────────────────────
+
+function DonutChart({ ytCount, igCount }: { ytCount: number; igCount: number }) {
+  const total = ytCount + igCount;
+  const ytPct = total ? (ytCount / total) * 100 : 50;
+  const r = 28, cx = 32, cy = 32, circ = 2 * Math.PI * r;
+  const ytDash = (ytPct / 100) * circ;
+  return (
+    <svg width="64" height="64" viewBox="0 0 64 64">
+      <circle cx={cx} cy={cy} r={r} fill="none" stroke="rgba(225,48,108,0.25)" strokeWidth="8" />
+      <circle cx={cx} cy={cy} r={r} fill="none" stroke="rgba(255,68,68,0.7)" strokeWidth="8"
+        strokeDasharray={`${ytDash} ${circ - ytDash}`} strokeDashoffset={circ / 4} strokeLinecap="round" />
+      <text x={cx} y={cy + 4} textAnchor="middle" fill="#dfe2ef" fontSize="10" fontFamily="JetBrains Mono,monospace" fontWeight="500">
+        {Math.round(ytPct)}%
+      </text>
+    </svg>
+  );
+}
+
+// ─── Mini Bar Chart ───────────────────────────────────────────────────────────
+
+function BarChart({ videos }: { videos: Video[] }) {
+  // A brand-new channel's freshest videos have no baseline yet (see
+  // backend/app/overperformance.py) — overperformRatio is null until enough
+  // history exists. Those can't be ranked here, so they're left out rather
+  // than crashing the max()/sort() below on a null.
+  const ranked = videos.filter((v): v is Video & { overperformRatio: number } => v.overperformRatio != null);
+  const top5 = [...ranked].sort((a, b) => b.overperformRatio - a.overperformRatio).slice(0, 6);
+  if (top5.length === 0) {
+    return <div className="text-xs py-2" style={{ color: "var(--text-muted)" }}>Not enough scrape history yet to rank channels.</div>;
+  }
+  const max = Math.max(...top5.map(v => v.overperformRatio));
+  return (
+    <div className="flex flex-col gap-1.5 w-full">
+      {top5.map(v => (
+        <div key={v.id} className="flex items-center gap-2">
+          <span className="text-[10px] font-mono truncate w-28 shrink-0" style={{ color: "var(--text-muted)" }}>{v.channelName}</span>
+          <div className="flex-1 h-1.5 rounded-full" style={{ background: "var(--bg-active)" }}>
+            <div className="h-full rounded-full transition-all" style={{
+              width: `${(v.overperformRatio / max) * 100}%`,
+              background: v.platform === "youtube" ? "var(--yt-red)" : "var(--ig-pink)"
+            }} />
+          </div>
+          <span className="text-[10px] font-mono w-8 text-right shrink-0" style={{ color: "var(--accent-light)" }}>{v.overperformRatio.toFixed(1)}x</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ─── Sidebar ──────────────────────────────────────────────────────────────────
+
+const COHORT_COLORS = ["#c0c1ff", "#ffb3ad", "#ffb0cd", "#8fe3c7", "#ffd88f", "#a8c8ff"];
+
+interface SidebarProps {
+  open: boolean;
+  activeSection: string;
+  setActiveSection: (s: string) => void;
+  overperformBadge: number | null;
+  cohorts: CohortSummary[];
+  quotaPct: number | null;
+  workspaceName: string;
+}
+
+function Sidebar({ open, activeSection, setActiveSection, overperformBadge, cohorts, quotaPct, workspaceName }: SidebarProps) {
+  const navLinks = [
+    { label: "Overperformance", icon: "chart", badge: overperformBadge },
+    { label: "Competitor Roster", icon: "people", badge: null as number | null },
+    { label: "Trend & Velocity", icon: "trend", badge: null as number | null },
+    { label: "Format Matrix", icon: "grid", badge: null as number | null },
+    { label: "Comparison", icon: "compare", badge: null as number | null },
+    { label: "Alert Rules", icon: "bell", badge: null as number | null },
+  ];
+
+  return (
+    <aside
+      className="sidebar-slide flex flex-col h-full shrink-0 overflow-hidden"
+      style={{
+        width: open ? 240 : 0,
+        opacity: open ? 1 : 0,
+        background: "var(--bg-panel)",
+        borderRight: "1px solid var(--border)",
+        pointerEvents: open ? "auto" : "none",
+      }}
+    >
+      {/* Brand */}
+      <div className="flex items-center justify-between px-4 py-4 shrink-0" style={{ borderBottom: "1px solid var(--border)" }}>
+        <div className="flex items-center gap-2.5">
+          <div className="relative flex items-center justify-center rounded-lg size-8 shrink-0" style={{ background: "var(--bg-active)" }}>
+            <svg width="14" height="14" viewBox="0 0 16.6667 16.6667" fill="none">
+              <path d={svgPaths.p367d180} fill="#c0c1ff" />
+            </svg>
+            <span className="notification-dot" style={{ position: "absolute", top: 3, right: 3, width: 7, height: 7, background: "#c0c1ff", borderRadius: "50%", border: "1.5px solid var(--bg-panel)" }} />
+          </div>
+          <div>
+            <div className="text-sm font-bold leading-none" style={{ color: "var(--text-primary)", fontFamily: "Lora, serif" }}>
+              Vortex<span style={{ color: "#c0c1ff" }}>.ai</span>
+            </div>
+            <div className="text-[10px] tracking-widest uppercase mt-0.5" style={{ color: "var(--text-muted)", fontFamily: "Lora, serif" }}>Outperform Studio</div>
+          </div>
+        </div>
+      </div>
+
+      {/* Workspace */}
+      <div className="px-3 py-2 shrink-0">
+        <div className="flex items-center justify-between rounded-lg px-3 py-2.5" style={{ background: "var(--bg-elevated)" }}>
+          <div>
+            <div className="text-[10px] tracking-widest uppercase mb-0.5" style={{ color: "var(--text-muted)", fontFamily: "Lora, serif" }}>Workspace</div>
+            <div className="text-xs font-semibold truncate max-w-[140px]" style={{ color: "var(--text-primary)", fontFamily: "Lora, serif" }}>{workspaceName}</div>
+          </div>
+          <svg width="6" height="12" viewBox="0 0 6 12" fill="none"><path d={svgPaths.p92c2900} fill="#c7c4d7" /></svg>
+        </div>
+      </div>
+
+      {/* Nav */}
+      <div className="px-2 shrink-0">
+        <div className="text-[10px] tracking-widest uppercase px-3 py-2" style={{ color: "var(--text-muted)", fontFamily: "Lora, serif" }}>
+          Telemetry & Analysis
+        </div>
+        <nav className="flex flex-col gap-0.5">
+          {navLinks.map(link => (
+            <button
+              key={link.label}
+              onClick={() => setActiveSection(link.label)}
+              className="flex items-center gap-3 px-3 py-2 rounded-lg w-full text-left transition-all"
+              style={{
+                background: activeSection === link.label ? "#8083ff" : "transparent",
+                color: activeSection === link.label ? "#0d0096" : "var(--text-secondary)",
+              }}
+            >
+              <NavIcon icon={link.icon} active={activeSection === link.label} />
+              <span className="text-sm flex-1" style={{ fontFamily: "Lora, serif" }}>{link.label}</span>
+              {link.badge != null && (
+                <span className="text-[10px] px-1.5 py-0.5 rounded-full font-bold" style={{
+                  background: activeSection === link.label ? "rgba(164,2,23,0.9)" : "#a40217",
+                  color: "#ffaea8",
+                }}>
+                  {link.badge}
+                </span>
+              )}
+            </button>
+          ))}
+        </nav>
+      </div>
+
+      {/* Cohorts */}
+      <div className="px-2 mt-2 flex-1 min-h-0 overflow-y-auto">
+        <div className="flex items-center justify-between px-3 py-2">
+          <span className="text-[10px] tracking-widest uppercase" style={{ color: "var(--text-muted)", fontFamily: "Lora, serif" }}>Saved Cohorts</span>
+          <svg width="8" height="8" viewBox="0 0 8.16667 8.16667" fill="none"><path d={svgPaths.p10ad69c0} fill="#c0c1ff" /></svg>
+        </div>
+        {cohorts.length === 0 ? (
+          <div className="px-3 py-2 text-xs" style={{ color: "var(--text-muted)" }}>
+            Tag channels with a cohort in Competitor Roster to group them here.
+          </div>
+        ) : (
+          cohorts.map((c, i) => (
+            <button key={c.label} className="flex items-center gap-3 px-3 py-2 rounded-lg w-full text-left hover:bg-white/5 transition-colors">
+              <div className="size-2 rounded-sm shrink-0" style={{ background: COHORT_COLORS[i % COHORT_COLORS.length] }} />
+              <span className="text-sm flex-1 text-left" style={{ color: "var(--text-secondary)", fontFamily: "Lora, serif" }}>{c.label}</span>
+              <span className="text-sm" style={{ color: "var(--text-muted)", fontFamily: "JetBrains Mono, monospace" }}>{c.count}</span>
+            </button>
+          ))
+        )}
+      </div>
+
+      {/* API Quota */}
+      <div className="p-2 shrink-0">
+        <div className="rounded-xl p-3" style={{ background: "#1c1f29" }}>
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-[10px] tracking-widest uppercase" style={{ color: "var(--text-secondary)", fontFamily: "Lora, serif" }}>API Quota</span>
+            <span className="text-xs font-bold" style={{ color: "var(--text-primary)", fontFamily: "JetBrains Mono, monospace" }}>
+              {quotaPct == null ? "—" : `${quotaPct}%`}
+            </span>
+          </div>
+          <div className="h-1.5 rounded-full overflow-hidden" style={{ background: "var(--bg-active)" }}>
+            <div className="h-full rounded-full" style={{ width: `${quotaPct ?? 0}%`, background: "var(--accent-light)" }} />
+          </div>
+          <div className="flex items-center justify-between mt-2">
+            <span className="text-[11px]" style={{ color: "var(--text-muted)", fontFamily: "Lora, serif" }}>YouTube Data API, today</span>
+            <svg width="11" height="9" viewBox="0 0 11.6676 9.33333" fill="none"><path d={svgPaths.p1cccc530} fill="#908fa0" /></svg>
+          </div>
+        </div>
+      </div>
+    </aside>
+  );
+}
+
+function NavIcon({ icon, active }: { icon: string; active: boolean }) {
+  const color = active ? "#0d0096" : "#c7c4d7";
+  const icons: Record<string, React.ReactElement> = {
+    chart: <svg width="16" height="13" viewBox="0 0 16.6681 13.3333" fill="none"><path d={svgPaths.p350ec980} fill={color} /></svg>,
+    people: <svg width="20" height="10" viewBox="0 0 20 10" fill="none"><path d={svgPaths.p279daa80} fill={color} /></svg>,
+    trend: <svg width="16" height="11" viewBox="0 0 16.6667 10.8333" fill="none"><path d={svgPaths.p617b400} fill={color} /></svg>,
+    grid: <svg width="15" height="15" viewBox="0 0 15 15" fill="none"><path d={svgPaths.p1d75e100} fill={color} /></svg>,
+    compare: <svg width="16" height="13" viewBox="0 0 16.6667 13.3333" fill="none"><path d={svgPaths.p110e1200} fill={color} /></svg>,
+    bell: <svg width="16" height="16" viewBox="0 0 16.6667 16.7083" fill="none"><path d={svgPaths.p1dcf6b00} fill={color} /></svg>,
+  };
+  return icons[icon] || <div className="size-4" />;
+}
+
+// ─── Notification Panel ───────────────────────────────────────────────────────
+
+function NotificationPanel({ videos, loading, onClose }: { videos: Video[]; loading: boolean; onClose: () => void }) {
+  const topVideos = videos.slice(0, 5);
+  const ytCount = videos.filter(v => v.platform === "youtube").length;
+  const igCount = videos.filter(v => v.platform === "instagram").length;
+  const totalViews = videos.reduce((s, v) => s + v.views, 0);
+  const avgRatio = videos.length ? (videos.reduce((s, v) => s + (v.overperformRatio ?? 0), 0) / videos.length) : 0;
+
+  return (
+    <div className="absolute right-0 top-12 z-50 w-80 rounded-xl overflow-hidden shadow-2xl"
+      style={{ background: "var(--bg-card)", border: "1px solid var(--border)" }}>
+      <div className="flex items-center justify-between px-4 py-3" style={{ borderBottom: "1px solid var(--border)" }}>
+        <span className="text-sm font-semibold" style={{ color: "var(--text-primary)", fontFamily: "Lora, serif" }}>Performance Overview</span>
+        <button onClick={onClose} className="opacity-50 hover:opacity-100 transition-opacity" style={{ color: "var(--text-secondary)" }}>
+          <XIcon size={12} />
+        </button>
+      </div>
+
+      {loading ? (
+        <div className="px-4 py-6 text-xs text-center" style={{ color: "var(--text-muted)" }}>Loading…</div>
+      ) : videos.length === 0 ? (
+        <div className="px-4 py-6 text-xs text-center" style={{ color: "var(--text-muted)" }}>
+          No videos are overperforming yet. Add channels and run a scrape to start tracking.
+        </div>
+      ) : (
+        <>
+          {/* Stats */}
+          <div className="grid grid-cols-2 gap-px" style={{ background: "var(--border)" }}>
+            {[
+              { label: "Overperforming", value: String(videos.length), sub: "videos" },
+              { label: "Avg Ratio", value: avgRatio.toFixed(2) + "x", sub: "above baseline" },
+              { label: "Total Views", value: fmtViews(totalViews), sub: "combined" },
+              { label: "Platforms", value: `YT ${ytCount} · IG ${igCount}`, sub: "channels active" },
+            ].map(s => (
+              <div key={s.label} className="px-4 py-3" style={{ background: "var(--bg-card)" }}>
+                <div className="text-[10px] uppercase tracking-widest mb-1" style={{ color: "var(--text-muted)", fontFamily: "Lora, serif" }}>{s.label}</div>
+                <div className="text-base font-bold" style={{ color: "var(--text-primary)", fontFamily: "JetBrains Mono, monospace" }}>{s.value}</div>
+                <div className="text-[11px]" style={{ color: "var(--text-muted)" }}>{s.sub}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* Platform split */}
+          <div className="px-4 py-3" style={{ borderTop: "1px solid var(--border)" }}>
+            <div className="flex items-center gap-3">
+              <DonutChart ytCount={ytCount} igCount={igCount} />
+              <div className="flex-1">
+                <div className="flex items-center gap-2 mb-1.5">
+                  <div className="size-2 rounded-sm" style={{ background: "var(--yt-red)" }} />
+                  <span className="text-xs" style={{ color: "var(--text-secondary)", fontFamily: "Lora, serif" }}>YouTube — {ytCount}</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="size-2 rounded-sm" style={{ background: "var(--ig-pink)" }} />
+                  <span className="text-xs" style={{ color: "var(--text-secondary)", fontFamily: "Lora, serif" }}>Instagram — {igCount}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Top alerts */}
+          <div className="px-4 pb-3" style={{ borderTop: "1px solid var(--border)" }}>
+            <div className="text-[10px] uppercase tracking-widest py-2" style={{ color: "var(--text-muted)", fontFamily: "Lora, serif" }}>Top Performers</div>
+            <div className="flex flex-col gap-2">
+              {topVideos.map(v => (
+                <div key={v.id} className="flex items-center gap-2">
+                  <span className="text-[10px] w-7 shrink-0 font-mono font-bold" style={{ color: "#4ade80" }}>{fmtRatio(v.overperformRatio)}</span>
+                  <span className="text-xs truncate flex-1" style={{ color: "var(--text-secondary)", fontFamily: "Lora, serif" }}>{v.title}</span>
+                  <span className={`text-[10px] px-1.5 rounded-sm ${v.platform === "youtube" ? "badge-yt" : "badge-ig"}`}>
+                    {v.platform === "youtube" ? "YT" : "IG"}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ─── Filter Bar ───────────────────────────────────────────────────────────────
+
+interface Filters {
+  platform: Platform;
+  channels: string[];
+  dateFrom: string;
+  dateTo: string;
+  viewsThreshold: string;
+  sortBy: string;
+  showChart: boolean;
+  format: string;
+}
+
+function FilterBar({ filters, setFilters, viewMode, setViewMode, totalResults, channels }: {
+  filters: Filters;
+  setFilters: (f: Filters) => void;
+  viewMode: ViewMode;
+  setViewMode: (v: ViewMode) => void;
+  totalResults: number;
+  channels: Channel[];
+}) {
+  const [channelOpen, setChannelOpen] = useState(false);
+  const dropRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handler(e: MouseEvent) {
+      if (dropRef.current && !dropRef.current.contains(e.target as Node)) setChannelOpen(false);
+    }
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
+  const platformChannels = channels.filter(c => filters.platform === "all" || c.platform === filters.platform);
+
+  function toggleChannel(id: string) {
+    const next = filters.channels.includes(id)
+      ? filters.channels.filter(c => c !== id)
+      : [...filters.channels, id];
+    setFilters({ ...filters, channels: next });
+  }
+
+  function clearChannels() { setFilters({ ...filters, channels: [] }); }
+
+  const set = (k: keyof Filters) => (val: string | boolean) => setFilters({ ...filters, [k]: val });
+
+  return (
+    <div className="sticky top-0 z-30 px-5 py-3 flex flex-wrap items-center gap-2" style={{ background: "rgba(15,19,28,0.92)", backdropFilter: "blur(12px)", borderBottom: "1px solid var(--border)" }}>
+
+      {/* Platform toggle */}
+      <div className="flex rounded-lg overflow-hidden shrink-0" style={{ border: "1px solid var(--border)" }}>
+        {(["all", "youtube", "instagram"] as Platform[]).map(p => (
+          <button key={p} onClick={() => setFilters({ ...filters, platform: p, channels: [] })}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs transition-all"
+            style={{
+              background: filters.platform === p ? "var(--accent)" : "var(--bg-elevated)",
+              color: filters.platform === p ? "#0d0096" : "var(--text-muted)",
+              fontFamily: "Inter, sans-serif",
+              fontWeight: 500,
+            }}>
+            {p === "youtube" && <YTIcon size={12} />}
+            {p === "instagram" && <IGIcon size={12} />}
+            {p === "all" ? "All" : p === "youtube" ? "YouTube" : "Instagram"}
+          </button>
+        ))}
+      </div>
+
+      {/* Channel multi-select */}
+      <div className="relative shrink-0" ref={dropRef}>
+        <button onClick={() => setChannelOpen(o => !o)}
+          className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs transition-all"
+          style={{ background: "var(--bg-elevated)", color: filters.channels.length ? "var(--accent-light)" : "var(--text-muted)", border: `1px solid ${filters.channels.length ? "var(--accent)" : "var(--border)"}`, fontFamily: "Inter, sans-serif" }}>
+          {filters.channels.length ? `${filters.channels.length} channels` : "All Channels"}
+          <ChevronDown />
+        </button>
+        {channelOpen && (
+          <div className="absolute left-0 top-10 z-50 w-56 rounded-xl py-1.5 shadow-2xl overflow-hidden"
+            style={{ background: "var(--bg-card)", border: "1px solid var(--border)" }}>
+            <div className="flex items-center justify-between px-3 py-1.5" style={{ borderBottom: "1px solid var(--border)" }}>
+              <span className="text-[10px] uppercase tracking-widest" style={{ color: "var(--text-muted)", fontFamily: "Lora, serif" }}>Select channels</span>
+              {filters.channels.length > 0 && (
+                <button onClick={clearChannels} className="text-[10px] hover:underline" style={{ color: "var(--accent-light)" }}>Clear</button>
+              )}
+            </div>
+            {platformChannels.length === 0 ? (
+              <div className="px-3 py-3 text-xs" style={{ color: "var(--text-muted)" }}>
+                No channels tracked yet — add some in Competitor Roster.
+              </div>
+            ) : (
+              platformChannels.map(c => (
+                <label key={c.id} className="flex items-center gap-2.5 px-3 py-2 cursor-pointer hover:bg-white/5 transition-colors">
+                  <input type="checkbox" checked={filters.channels.includes(c.id)} onChange={() => toggleChannel(c.id)}
+                    className="accent-purple-400 cursor-pointer" />
+                  <span className="text-xs flex-1" style={{ color: "var(--text-secondary)", fontFamily: "Lora, serif" }}>{c.name}</span>
+                  <span className={`text-[10px] px-1.5 rounded ${c.platform === "youtube" ? "badge-yt" : "badge-ig"}`}>
+                    {c.platform === "youtube" ? "YT" : "IG"}
+                  </span>
+                </label>
+              ))
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Date range */}
+      <div className="flex items-center gap-1 shrink-0">
+        <input type="date" value={filters.dateFrom} onChange={e => set("dateFrom")(e.target.value)}
+          className="select-custom text-xs" style={{ fontFamily: "JetBrains Mono, monospace" }} />
+        <span style={{ color: "var(--text-muted)" }} className="text-xs">→</span>
+        <input type="date" value={filters.dateTo} onChange={e => set("dateTo")(e.target.value)}
+          className="select-custom text-xs" style={{ fontFamily: "JetBrains Mono, monospace" }} />
+      </div>
+
+      {/* Views threshold — the "optional benchmark": set it and the grid
+          below only shows videos that crossed it. */}
+      <div className="relative shrink-0">
+        <input type="number" placeholder="Min views (optional)" value={filters.viewsThreshold}
+          onChange={e => set("viewsThreshold")(e.target.value)}
+          className="select-custom text-xs w-40 pr-3" style={{ fontFamily: "JetBrains Mono, monospace" }} />
+      </div>
+
+      {/* Format filter */}
+      <select value={filters.format} onChange={e => set("format")(e.target.value)}
+        className="select-custom text-xs shrink-0" style={{ fontFamily: "Inter, sans-serif" }}>
+        <option value="all">All Formats</option>
+        <option value="long">Long-form</option>
+        <option value="short">Shorts / Reels</option>
+        <option value="reel">Reels only</option>
+      </select>
+
+      {/* Sort */}
+      <select value={filters.sortBy} onChange={e => set("sortBy")(e.target.value)}
+        className="select-custom text-xs shrink-0" style={{ fontFamily: "Inter, sans-serif" }}>
+        <option value="ratio">Sort: Overperform ratio</option>
+        <option value="views">Sort: Total views</option>
+        <option value="date">Sort: Publish date</option>
+        <option value="engagement">Sort: Engagement</option>
+      </select>
+
+      {/* Chart toggle chip */}
+      <button onClick={() => set("showChart")(!filters.showChart)}
+        className={`filter-chip shrink-0 ${filters.showChart ? "active" : ""}`}>
+        <BarChartIcon />
+        Chart
+      </button>
+
+      {/* Spacer */}
+      <div className="flex-1 min-w-0" />
+
+      {/* Result count */}
+      <span className="text-xs shrink-0" style={{ color: "var(--text-muted)", fontFamily: "JetBrains Mono, monospace" }}>
+        {totalResults} videos
+      </span>
+
+      {/* View mode */}
+      <div className="flex rounded-lg overflow-hidden shrink-0" style={{ border: "1px solid var(--border)" }}>
+        <button onClick={() => setViewMode("grid")} className="p-1.5 transition-colors"
+          style={{ background: viewMode === "grid" ? "var(--bg-active)" : "var(--bg-elevated)", color: viewMode === "grid" ? "var(--accent-light)" : "var(--text-muted)" }}>
+          <GridIcon />
+        </button>
+        <button onClick={() => setViewMode("list")} className="p-1.5 transition-colors"
+          style={{ background: viewMode === "list" ? "var(--bg-active)" : "var(--bg-elevated)", color: viewMode === "list" ? "var(--accent-light)" : "var(--text-muted)" }}>
+          <ListIcon />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Video Card ───────────────────────────────────────────────────────────────
+
+function VideoCard({ video, mode }: { video: Video; mode: ViewMode }) {
+  const ratio = video.overperformRatio;
+  const overColor = ratio == null ? "var(--text-muted)" : ratio >= 3 ? "#4ade80" : ratio >= 2 ? "#facc15" : "#fb923c";
+  const thumb = video.thumbnail;
+  const Wrapper = video.url ? "a" : "div";
+  const wrapperProps = video.url ? { href: video.url, target: "_blank", rel: "noreferrer" } : {};
+
+  if (mode === "list") {
+    return (
+      <Wrapper {...(wrapperProps as any)} className="video-card flex items-center gap-4 p-3 cursor-pointer group">
+        <div className="relative shrink-0 rounded-lg overflow-hidden w-32 h-20" style={{ background: "var(--bg-elevated)" }}>
+          {thumb ? <img src={thumb} alt={video.title} className="size-full object-cover" loading="lazy" /> : null}
+          <div className="absolute bottom-1 right-1 text-[10px] px-1 rounded font-mono" style={{ background: "rgba(0,0,0,0.75)", color: "#fff" }}>
+            {video.duration}
+          </div>
+          <div className="absolute top-1 left-1">
+            <span className={`text-[10px] px-1.5 py-0.5 rounded ${video.platform === "youtube" ? "badge-yt" : "badge-ig"}`}>
+              {video.platform === "youtube" ? <YTIcon size={9} /> : <IGIcon size={9} />}
+            </span>
+          </div>
+        </div>
+
+        <div className="flex-1 min-w-0">
+          <div className="text-sm font-semibold truncate mb-1" style={{ color: "var(--text-primary)", fontFamily: "Lora, serif" }}>{video.title}</div>
+          <div className="flex items-center gap-3 flex-wrap">
+            <span className="text-xs" style={{ color: "var(--text-muted)", fontFamily: "Lora, serif" }}>{video.channelName}</span>
+            <span className="text-xs" style={{ color: "var(--text-muted)" }}>·</span>
+            <span className="text-xs font-mono" style={{ color: "var(--text-muted)" }}>{fmtDate(video.publishedAt)}</span>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-6 shrink-0">
+          <div className="text-right">
+            <div className="text-sm font-bold font-mono" style={{ color: "var(--text-primary)" }}>{fmtViews(video.views)}</div>
+            <div className="text-[10px]" style={{ color: "var(--text-muted)" }}>views</div>
+          </div>
+          <div className="text-right">
+            <div className="text-sm font-bold font-mono flex items-center gap-1" style={{ color: overColor }}>
+              <TrendUpIcon />{fmtRatio(ratio)}
+            </div>
+            <div className="text-[10px]" style={{ color: "var(--text-muted)" }}>vs avg</div>
+          </div>
+          <Sparkline ratio={ratio ?? 1} color={overColor} />
+          {ratio != null && ratio >= 2 && <span className="badge-overperform text-[10px] px-2 py-0.5 rounded-full font-mono font-bold">OVP</span>}
+        </div>
+      </Wrapper>
+    );
+  }
+
+  return (
+    <Wrapper {...(wrapperProps as any)} className="video-card cursor-pointer group flex flex-col">
+      <div className="relative w-full aspect-video overflow-hidden" style={{ background: "var(--bg-elevated)" }}>
+        {thumb ? (
+          <img src={thumb} alt={video.title} className="size-full object-cover group-hover:scale-105 transition-transform duration-300" loading="lazy" />
+        ) : (
+          <div className="size-full flex items-center justify-center text-3xl">🎬</div>
+        )}
+        <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent" />
+        <div className="absolute bottom-2 right-2 text-[10px] px-1.5 py-0.5 rounded font-mono font-medium" style={{ background: "rgba(0,0,0,0.8)", color: "#fff" }}>
+          {video.duration}
+        </div>
+        <div className="absolute top-2 left-2 flex gap-1">
+          <span className={`text-[10px] px-1.5 py-0.5 rounded-sm flex items-center gap-1 ${video.platform === "youtube" ? "badge-yt" : "badge-ig"}`}>
+            {video.platform === "youtube" ? <YTIcon size={9} /> : <IGIcon size={9} />}
+            {video.platform === "youtube" ? "YT" : "IG"}
+          </span>
+        </div>
+        <div className="absolute top-2 right-2">
+          <span className="badge-overperform text-[10px] px-1.5 py-0.5 rounded-sm font-mono font-bold flex items-center gap-1">
+            <TrendUpIcon />{ratio == null ? "New" : `${ratio.toFixed(1)}x`}
+          </span>
+        </div>
+      </div>
+
+      <div className="p-3 flex flex-col gap-2 flex-1">
+        <div className="text-sm font-semibold leading-snug line-clamp-2" style={{ color: "var(--text-primary)", fontFamily: "Lora, serif" }}>{video.title}</div>
+        <div className="flex items-center justify-between">
+          <span className="text-xs truncate" style={{ color: "var(--text-muted)", fontFamily: "Lora, serif" }}>{video.channelName}</span>
+          <span className="text-[11px] font-mono shrink-0 ml-1" style={{ color: "var(--text-muted)" }}>{fmtDate(video.publishedAt)}</span>
+        </div>
+
+        <div className="flex items-center gap-3 mt-auto pt-2" style={{ borderTop: "1px solid var(--border)" }}>
+          <div className="flex-1">
+            <div className="text-[10px] mb-0.5" style={{ color: "var(--text-muted)" }}>Views</div>
+            <div className="text-sm font-bold font-mono" style={{ color: "var(--text-primary)" }}>{fmtViews(video.views)}</div>
+          </div>
+          <div className="flex-1">
+            <div className="text-[10px] mb-0.5" style={{ color: "var(--text-muted)" }}>Avg</div>
+            <div className="text-sm font-mono" style={{ color: "var(--text-muted)" }}>{fmtViewsN(video.avgViews)}</div>
+          </div>
+          <div>
+            <Sparkline ratio={ratio ?? 1} color={overColor} />
+          </div>
+        </div>
+      </div>
+    </Wrapper>
+  );
+}
+
+// ─── Chart Panel ──────────────────────────────────────────────────────────────
+
+function ChartPanel({ videos }: { videos: Video[] }) {
+  return (
+    <div className="mx-5 mb-4 rounded-xl p-4" style={{ background: "var(--bg-card)", border: "1px solid var(--border)" }}>
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <div className="text-sm font-semibold" style={{ color: "var(--text-primary)", fontFamily: "Lora, serif" }}>Overperformance by Channel</div>
+          <div className="text-xs" style={{ color: "var(--text-muted)" }}>Ratio vs channel baseline — filtered results</div>
+        </div>
+        <div className="flex items-center gap-3 text-xs" style={{ fontFamily: "Lora, serif" }}>
+          <span className="flex items-center gap-1.5"><span className="size-2 rounded-sm inline-block" style={{ background: "var(--yt-red)" }} />YouTube</span>
+          <span className="flex items-center gap-1.5"><span className="size-2 rounded-sm inline-block" style={{ background: "var(--ig-pink)" }} />Instagram</span>
+        </div>
+      </div>
+      <BarChart videos={videos} />
+    </div>
+  );
+}
+
+// ─── Competitor Roster ────────────────────────────────────────────────────────
+// Fills in what was previously just a sidebar nav item with no content: add,
+// tag, and remove the channels this workspace tracks (see POST/PATCH/DELETE
+// /api/channels in backend/app/routers/channels.py). Adding a channel here
+// registers it for the next scrape run — it does not scrape immediately (see
+// that router's module docstring for why).
+
+function CompetitorRoster({ channels, onChanged }: { channels: Channel[]; onChanged: () => void }) {
+  const [platform, setPlatform] = useState<"youtube" | "instagram">("youtube");
+  const [handle, setHandle] = useState("");
+  const [cohort, setCohort] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+
+  async function handleAdd(e: React.FormEvent) {
+    e.preventDefault();
+    if (!handle.trim()) return;
+    setSubmitting(true);
+    setFormError(null);
+    try {
+      await createChannel({ platform, handle: handle.trim(), cohort: cohort.trim() || null });
+      setHandle("");
+      setCohort("");
+      onChanged();
+    } catch (err) {
+      setFormError(err instanceof ApiError ? err.message : "Could not add that channel.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function handleRemove(id: string) {
+    await deleteChannel(id);
+    onChanged();
+  }
+
+  async function handleToggleActive(c: Channel) {
+    await updateChannel(c.id, { isActive: !c.isActive });
+    onChanged();
+  }
+
+  return (
+    <div className="p-5 max-w-3xl">
+      <form onSubmit={handleAdd} className="rounded-xl p-4 mb-5 flex flex-wrap items-end gap-3" style={{ background: "var(--bg-card)", border: "1px solid var(--border)" }}>
+        <div>
+          <div className="text-[10px] uppercase tracking-widest mb-1" style={{ color: "var(--text-muted)" }}>Platform</div>
+          <select value={platform} onChange={e => setPlatform(e.target.value as "youtube" | "instagram")} className="select-custom text-xs">
+            <option value="youtube">YouTube</option>
+            <option value="instagram">Instagram</option>
+          </select>
+        </div>
+        <div className="flex-1 min-w-[200px]">
+          <div className="text-[10px] uppercase tracking-widest mb-1" style={{ color: "var(--text-muted)" }}>
+            {platform === "youtube" ? "@handle, channel URL, or channel ID" : "Instagram username"}
+          </div>
+          <input value={handle} onChange={e => setHandle(e.target.value)} placeholder={platform === "youtube" ? "@mkbhd" : "theverge"}
+            className="select-custom text-xs w-full" style={{ fontFamily: "JetBrains Mono, monospace" }} />
+        </div>
+        <div>
+          <div className="text-[10px] uppercase tracking-widest mb-1" style={{ color: "var(--text-muted)" }}>Cohort (optional)</div>
+          <input value={cohort} onChange={e => setCohort(e.target.value)} placeholder="Tech Giants"
+            className="select-custom text-xs w-40" />
+        </div>
+        <button type="submit" disabled={submitting || !handle.trim()}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all disabled:opacity-50"
+          style={{ background: "var(--accent)", color: "#0d0096" }}>
+          <PlusIcon />
+          {submitting ? "Adding…" : "Track channel"}
+        </button>
+        {formError && <div className="text-xs w-full" style={{ color: "#fb923c" }}>{formError}</div>}
+      </form>
+
+      {channels.length === 0 ? (
+        <div className="flex flex-col items-center justify-center h-48" style={{ color: "var(--text-muted)" }}>
+          <div className="text-4xl mb-3">📡</div>
+          <div className="text-sm" style={{ fontFamily: "Lora, serif" }}>No competitors tracked yet</div>
+          <div className="text-xs mt-1">Add a YouTube or Instagram handle above to start scraping it.</div>
+        </div>
+      ) : (
+        <div className="flex flex-col gap-2">
+          {channels.map(c => (
+            <div key={c.id} className="video-card flex items-center gap-3 p-3">
+              <div className="flex items-center justify-center rounded-full size-9 shrink-0 text-xs font-bold" style={{ background: "var(--bg-elevated)", color: "var(--accent-light)" }}>
+                {c.avatarUrl ? <img src={c.avatarUrl} alt={c.name} className="size-9 rounded-full object-cover" /> : c.avatar}
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="text-sm font-semibold truncate" style={{ color: "var(--text-primary)", fontFamily: "Lora, serif" }}>{c.name}</div>
+                <div className="flex items-center gap-2 mt-0.5">
+                  <span className={`text-[10px] px-1.5 rounded ${c.platform === "youtube" ? "badge-yt" : "badge-ig"}`}>{c.platform === "youtube" ? "YT" : "IG"}</span>
+                  <span className="text-xs font-mono" style={{ color: "var(--text-muted)" }}>{c.subs} subscribers</span>
+                  {c.cohort && <span className="filter-chip">{c.cohort}</span>}
+                </div>
+              </div>
+              <button onClick={() => handleToggleActive(c)} className="text-xs px-2 py-1 rounded-lg" style={{ color: "var(--text-muted)", border: "1px solid var(--border)" }}>
+                {c.isActive ? "Pause" : "Resume"}
+              </button>
+              <button onClick={() => handleRemove(c.id)} className="flex items-center justify-center rounded-lg size-8 hover:bg-white/5" style={{ color: "var(--text-muted)" }}>
+                <TrashIcon />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Coming Soon (placeholder sections) ────────────────────────────────────────
+// The Figma design ships six nav sections but only "Overperformance" had a
+// real view behind it. Rather than leave the other four (Trend & Velocity,
+// Format Matrix, Comparison, Alert Rules — Competitor Roster now has a real
+// view above) silently doing nothing when clicked, they get an honest empty
+// state saying so. See PRODUCTION_ROADMAP.md "Phase 2" for what each would
+// need — the underlying /api/videos data already has everything (format,
+// engagement, per-channel history) they'd be built from.
+
+function ComingSoon({ section }: { section: string }) {
+  const copy: Record<string, string> = {
+    "Trend & Velocity": "Will chart how fast each channel's views/engagement are accelerating over time.",
+    "Format Matrix": "Will break down overperformance by format (long-form vs. Shorts vs. Reels) per channel.",
+    "Comparison": "Will let you pick two channels or cohorts and compare their metrics side by side.",
+    "Alert Rules": "Will let you configure custom overperformance thresholds per channel/cohort with notifications.",
+  };
+  return (
+    <div className="flex flex-col items-center justify-center h-64" style={{ color: "var(--text-muted)" }}>
+      <div className="text-4xl mb-3">🚧</div>
+      <div className="text-sm" style={{ fontFamily: "Lora, serif" }}>{section} — coming soon</div>
+      <div className="text-xs mt-1 max-w-sm text-center">{copy[section] ?? "This section isn't built yet."}</div>
+    </div>
+  );
+}
+
+// ─── Main App ─────────────────────────────────────────────────────────────────
+
+const EMPTY_VIDEOS: Video[] = [];
+
+export default function App() {
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [activeSection, setActiveSection] = useState("Overperformance");
+  const [notifOpen, setNotifOpen] = useState(false);
+  const [viewMode, setViewMode] = useState<ViewMode>("grid");
+  const notifRef = useRef<HTMLDivElement>(null);
+
+  const [filters, setFilters] = useState<Filters>({
+    platform: "all",
+    channels: [],
+    dateFrom: "",
+    dateTo: "",
+    viewsThreshold: "",
+    sortBy: "ratio",
+    showChart: false,
+    format: "all",
+  });
+
+  const [channels, setChannels] = useState<Channel[]>([]);
+  const [cohorts, setCohorts] = useState<CohortSummary[]>([]);
+  const [systemStatus, setSystemStatus] = useState<SystemStatus | null>(null);
+
+  const [videos, setVideos] = useState<Video[]>(EMPTY_VIDEOS);
+  const [videosLoading, setVideosLoading] = useState(true);
+  const [videosError, setVideosError] = useState<string | null>(null);
+
+  const [notifVideos, setNotifVideos] = useState<Video[]>(EMPTY_VIDEOS);
+  const [notifLoading, setNotifLoading] = useState(false);
+
+  const refreshChannelsAndCohorts = useCallback(() => {
+    fetchChannels().then(setChannels).catch(() => {});
+    fetchCohorts().then(setCohorts).catch(() => {});
+    fetchSystemStatus().then(setSystemStatus).catch(() => {});
+  }, []);
+
+  // Initial load.
+  useEffect(() => {
+    refreshChannelsAndCohorts();
+  }, [refreshChannelsAndCohorts]);
+
+  // Re-fetch videos whenever a filter changes. Debounced so typing in the
+  // "min views" box doesn't fire a request per keystroke — filtering now
+  // happens server-side (see backend/app/routers/videos.py) rather than in
+  // a client-side useMemo, since it needs to scale past a hardcoded array.
+  useEffect(() => {
+    setVideosLoading(true);
+    setVideosError(null);
+    const handle = window.setTimeout(() => {
+      fetchVideos({
+        platform: filters.platform,
+        channels: filters.channels,
+        dateFrom: filters.dateFrom,
+        dateTo: filters.dateTo,
+        viewsThreshold: filters.viewsThreshold,
+        format: filters.format,
+        sortBy: filters.sortBy,
+      })
+        .then(result => {
+          setVideos(result.videos);
+          setVideosLoading(false);
+        })
+        .catch(err => {
+          setVideosError(err instanceof ApiError ? err.message : "Could not load videos.");
+          setVideosLoading(false);
+        });
+    }, 300);
+    return () => window.clearTimeout(handle);
+  }, [filters]);
+
+  useEffect(() => {
+    function handler(e: MouseEvent) {
+      if (notifRef.current && !notifRef.current.contains(e.target as Node)) setNotifOpen(false);
+    }
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
+  function openNotifications() {
+    setNotifOpen(o => {
+      const next = !o;
+      if (next) {
+        setNotifLoading(true);
+        fetchVideos({ platform: "all", channels: [], dateFrom: "", dateTo: "", viewsThreshold: "", format: "all", sortBy: "ratio", limit: 50 })
+          .then(result => {
+            setNotifVideos(result.videos.filter(v => v.overperformRatio != null && v.overperformRatio >= 2));
+            setNotifLoading(false);
+          })
+          .catch(() => setNotifLoading(false));
+      }
+      return next;
+    });
+  }
+
+  return (
+    <div className="flex h-full overflow-hidden" style={{ background: "var(--bg-base)", fontFamily: "Lora, serif" }}>
+      <Sidebar
+        open={sidebarOpen}
+        activeSection={activeSection}
+        setActiveSection={setActiveSection}
+        overperformBadge={systemStatus?.overperformCount ?? null}
+        cohorts={cohorts}
+        quotaPct={systemStatus?.youtubeQuotaPct ?? null}
+        workspaceName={systemStatus?.workspaceName ?? "Competitor Dashboard"}
+      />
+
+      {/* Main */}
+      <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
+
+        {/* Top Bar */}
+        <div className="flex items-center justify-between px-5 py-3 shrink-0" style={{ borderBottom: "1px solid var(--border)", background: "var(--bg-panel)" }}>
+          <div className="flex items-center gap-3">
+            <button onClick={() => setSidebarOpen(o => !o)}
+              className="flex items-center justify-center rounded-lg size-8 transition-colors hover:bg-white/5"
+              style={{ color: "var(--text-muted)", border: "1px solid var(--border)" }}>
+              <MenuIcon />
+            </button>
+            <div>
+              <h1 className="text-sm font-bold leading-none" style={{ color: "var(--text-primary)", fontFamily: "Lora, serif" }}>
+                {activeSection}
+              </h1>
+              <p className="text-[11px] mt-0.5" style={{ color: "var(--text-muted)" }}>
+                Competitor video intelligence · {currentMonthLabel()}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            {/* Active filters summary */}
+            <div className="flex items-center gap-1.5 flex-wrap">
+              {filters.platform !== "all" && (
+                <span className="filter-chip active">
+                  {filters.platform === "youtube" ? <YTIcon size={10} /> : <IGIcon size={10} />}
+                  {filters.platform}
+                  <button onClick={() => setFilters({ ...filters, platform: "all" })}><XIcon /></button>
+                </span>
+              )}
+              {filters.channels.length > 0 && (
+                <span className="filter-chip active">
+                  {filters.channels.length} ch
+                  <button onClick={() => setFilters({ ...filters, channels: [] })}><XIcon /></button>
+                </span>
+              )}
+              {filters.viewsThreshold && (
+                <span className="filter-chip active">
+                  ≥{fmtViews(Number(filters.viewsThreshold))}
+                  <button onClick={() => setFilters({ ...filters, viewsThreshold: "" })}><XIcon /></button>
+                </span>
+              )}
+            </div>
+
+            {/* Notification bell */}
+            <div className="relative" ref={notifRef}>
+              <button onClick={openNotifications}
+                className="flex items-center justify-center rounded-lg size-9 transition-colors hover:bg-white/5"
+                style={{ color: notifOpen ? "var(--accent-light)" : "var(--text-muted)", border: `1px solid ${notifOpen ? "var(--accent)" : "var(--border)"}` }}>
+                <BellIcon />
+                <span className="notification-dot" />
+              </button>
+              {notifOpen && <NotificationPanel videos={notifVideos} loading={notifLoading} onClose={() => setNotifOpen(false)} />}
+            </div>
+          </div>
+        </div>
+
+        {activeSection === "Competitor Roster" ? (
+          <div className="flex-1 overflow-y-auto">
+            <CompetitorRoster channels={channels} onChanged={refreshChannelsAndCohorts} />
+          </div>
+        ) : activeSection !== "Overperformance" ? (
+          <div className="flex-1 overflow-y-auto">
+            <ComingSoon section={activeSection} />
+          </div>
+        ) : (
+          <>
+            {/* Filter Bar */}
+            <FilterBar filters={filters} setFilters={setFilters} viewMode={viewMode} setViewMode={setViewMode} totalResults={videos.length} channels={channels} />
+
+            {/* Content */}
+            <div className="flex-1 overflow-y-auto">
+              {filters.showChart && <ChartPanel videos={videos} />}
+
+              {videosError ? (
+                <div className="flex flex-col items-center justify-center h-64" style={{ color: "var(--text-muted)" }}>
+                  <div className="text-4xl mb-3">⚠️</div>
+                  <div className="text-sm" style={{ fontFamily: "Lora, serif" }}>Couldn't load videos</div>
+                  <div className="text-xs mt-1">{videosError}</div>
+                </div>
+              ) : videosLoading ? (
+                <div className="flex flex-col items-center justify-center h-64" style={{ color: "var(--text-muted)" }}>
+                  <div className="text-sm" style={{ fontFamily: "Lora, serif" }}>Loading videos…</div>
+                </div>
+              ) : videos.length === 0 ? (
+                <div className="flex flex-col items-center justify-center h-64" style={{ color: "var(--text-muted)" }}>
+                  <div className="text-4xl mb-3">📭</div>
+                  <div className="text-sm" style={{ fontFamily: "Lora, serif" }}>No videos match your filters</div>
+                  <div className="text-xs mt-1">
+                    {channels.length === 0
+                      ? "Add a channel in Competitor Roster to get started."
+                      : "Try adjusting the date range or views threshold."}
+                  </div>
+                </div>
+              ) : viewMode === "grid" ? (
+                <div className="p-5 grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))" }}>
+                  {videos.map(v => <VideoCard key={v.id} video={v} mode="grid" />)}
+                </div>
+              ) : (
+                <div className="p-5 flex flex-col gap-2">
+                  {videos.map(v => <VideoCard key={v.id} video={v} mode="list" />)}
+                </div>
+              )}
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}

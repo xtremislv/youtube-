@@ -1,0 +1,21 @@
+# Pinned to the exact versions verified together (installed + full test
+# suite green) as of this project's build. Regenerate with:
+#   pip install -r requirements.in.txt && pip freeze
+# if you deliberately want to move to newer versions later.
+fastapi==0.141.1
+uvicorn[standard]==0.52.4
+SQLAlchemy==2.0.52
+psycopg[binary]==3.3.5
+alembic==1.19.1
+pydantic==2.13.5
+pydantic-settings==2.15.0
+python-dotenv==1.2.3
+APScheduler==3.11.3
+google-api-python-client==2.200.0
+apify-client==3.2.0
+httpx==0.28.1
+
+# dev / test only (also installed in CI, not required in production image if you trim it)
+pytest==9.1.1
+pytest-asyncio==1.4.0
+respx==0.23.1

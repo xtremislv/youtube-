@@ -1,0 +1,10 @@
+[
+  { "platform": "youtube", "handle": "@mkbhd", "cohort": "Tech Giants" },
+  { "platform": "youtube", "handle": "@LinusTechTips", "cohort": "Tech Giants" },
+  { "platform": "youtube", "handle": "@Dave2D", "cohort": "Tech Giants" },
+  { "platform": "youtube", "handle": "@verge", "cohort": "Tech Giants" },
+  { "platform": "instagram", "handle": "mkbhd", "cohort": "Tech Giants" },
+  { "platform": "instagram", "handle": "linustech", "cohort": "Tech Giants" },
+  { "platform": "instagram", "handle": "dave2d", "cohort": "Tech Giants" },
+  { "platform": "instagram", "handle": "theverge", "cohort": "Tech Giants" }
+]

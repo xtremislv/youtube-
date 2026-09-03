@@ -1,0 +1,51 @@
+# Free, host-agnostic daily trigger for the scrape job.
+#
+# Why this exists instead of relying on the backend host's own cron: the
+# free tiers of Render/Railway/etc. either don't include cron jobs, or the
+# web service itself sleeps when idle (so an in-process APScheduler job
+# never fires — see backend/app/scheduler.py). GitHub Actions' scheduled
+# workflows are free for public repos (and free for private repos up to a
+# generous monthly minutes allowance) and don't care whether your backend
+# is asleep — the curl call below wakes it.
+#
+# Setup: in your GitHub repo, go to Settings → Secrets and variables →
+# Actions, and add:
+#   BACKEND_URL              e.g. https://your-app.onrender.com
+#   SCRAPE_TRIGGER_API_KEY   the same value as backend/.env's
+#                            SCRAPE_TRIGGER_API_KEY
+#
+# You can also trigger a run manually any time from the Actions tab
+# ("Run workflow") — handy right after adding new channels.
+
+name: Daily competitor scrape
+
+on:
+  schedule:
+    # 06:00 UTC daily. Edit to taste — cron is always UTC regardless of
+    # where your server or your audience is.
+    - cron: "0 6 * * *"
+  workflow_dispatch: {}
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger YouTube scrape
+        run: |
+          curl --fail --show-error --silent \
+            --max-time 120 --retry 3 --retry-delay 15 \
+            -X POST "${BACKEND_URL}/api/scrape/run?platform=youtube" \
+            -H "X-API-Key: ${SCRAPE_API_KEY}"
+        env:
+          BACKEND_URL: ${{ secrets.BACKEND_URL }}
+          SCRAPE_API_KEY: ${{ secrets.SCRAPE_TRIGGER_API_KEY }}
+
+      - name: Trigger Instagram scrape
+        run: |
+          curl --fail --show-error --silent \
+            --max-time 300 --retry 3 --retry-delay 15 \
+            -X POST "${BACKEND_URL}/api/scrape/run?platform=instagram" \
+            -H "X-API-Key: ${SCRAPE_API_KEY}"
+        env:
+          BACKEND_URL: ${{ secrets.BACKEND_URL }}
+          SCRAPE_API_KEY: ${{ secrets.SCRAPE_TRIGGER_API_KEY }}

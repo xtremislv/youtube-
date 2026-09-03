@@ -1,0 +1,59 @@
+# Full self-host stack: Postgres + FastAPI backend + built dashboard behind
+# nginx. This is the "Docker on a VPS" deployment target described in
+# PRODUCTION_ROADMAP.md — `docker compose up -d --build` and you have a
+# working dashboard with a daily scrape scheduled inside the api container.
+#
+# Quick start:
+#   cp backend/.env.example backend/.env   # then fill in your API keys
+#   docker compose up -d --build
+#   docker compose exec api python scripts/seed_channels.py channels.seed.json
+#   open http://localhost:8080
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: dashboard
+      POSTGRES_PASSWORD: dashboard
+      POSTGRES_DB: dashboard
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dashboard"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: ./backend
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env
+    environment:
+      # In compose, the DB is reachable at the service name "db", not
+      # localhost — override whatever backend/.env has for local dev.
+      DATABASE_URL: postgresql+psycopg://dashboard:dashboard@db:5432/dashboard
+      # docker-compose is an always-on host, so it's a good fit for the
+      # in-process scheduler instead of the GitHub Actions cron workflow.
+      ENABLE_INTERNAL_SCHEDULER: "true"
+      CORS_ORIGINS: "http://localhost:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8000:8000" # exposed directly too, handy for hitting /docs while developing
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      - "8080:80"
+
+volumes:
+  db_data:

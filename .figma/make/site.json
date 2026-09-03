@@ -1,0 +1,10 @@
+{
+  "description": "Gain insights into social media performance with an interactive dashboard that analyzes top-performing YouTube and Instagram videos based on customizable filters.",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}

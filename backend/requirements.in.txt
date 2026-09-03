@@ -1,0 +1,15 @@
+fastapi
+uvicorn[standard]
+SQLAlchemy
+psycopg[binary]
+alembic
+pydantic
+pydantic-settings
+python-dotenv
+APScheduler
+google-api-python-client
+apify-client
+httpx
+pytest
+pytest-asyncio
+respx

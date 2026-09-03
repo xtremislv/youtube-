@@ -1,0 +1,52 @@
+# Render "Blueprint" — lets you deploy the whole stack in one click via
+# Render's dashboard ("New +" → "Blueprint", point it at this repo).
+# Free tier notes (see PRODUCTION_ROADMAP.md for the full breakdown):
+#   - The api service below is a free web service: it sleeps after 15 min
+#     idle and cold-starts on the next request. That's fine for a small
+#     internal dashboard, and irrelevant to scraping since the daily scrape
+#     is triggered externally by .github/workflows/daily-scrape.yml (which
+#     wakes it via HTTP) rather than an in-process cron.
+#   - Render's own free Postgres is time-limited; this blueprint does NOT
+#     provision one. Create a free Postgres on Neon or Supabase instead
+#     (see PRODUCTION_ROADMAP.md) and paste its connection string into the
+#     DATABASE_URL environment variable after the first deploy.
+#   - You still need to set YOUTUBE_API_KEY, APIFY_API_TOKEN, and
+#     SCRAPE_TRIGGER_API_KEY as secrets in the Render dashboard — this file
+#     intentionally does not contain real secrets.
+
+services:
+  - type: web
+    name: competitor-dashboard-api
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    plan: free
+    healthCheckPath: /healthz
+    envVars:
+      - key: DATABASE_URL
+        sync: false # paste your Neon/Supabase connection string in the dashboard
+      - key: YOUTUBE_API_KEY
+        sync: false
+      - key: APIFY_API_TOKEN
+        sync: false
+      - key: APIFY_INSTAGRAM_ACTOR_ID
+        value: apify/instagram-scraper
+      - key: SCRAPE_TRIGGER_API_KEY
+        sync: false
+      - key: ENABLE_INTERNAL_SCHEDULER
+        value: "false" # free plan sleeps when idle; use the GitHub Actions cron instead
+      - key: CORS_ORIGINS
+        value: https://competitor-dashboard.onrender.com # update to your actual frontend URL
+
+  - type: web
+    name: competitor-dashboard-frontend
+    runtime: static
+    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm run build
+    staticPublishPath: ./dist
+    envVars:
+      - key: VITE_API_BASE_URL
+        value: https://competitor-dashboard-api.onrender.com # update to your actual backend URL
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
