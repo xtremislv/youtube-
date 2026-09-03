@@ -1,4 +1,4 @@
-# Free, host-agnostic daily trigger for the scrape job.
+# Free, host-agnostic scrape trigger, run on a schedule throughout the day.
 #
 # Why this exists instead of relying on the backend host's own cron: the
 # free tiers of Render/Railway/etc. either don't include cron jobs, or the
@@ -15,15 +15,36 @@
 #                            SCRAPE_TRIGGER_API_KEY
 #
 # You can also trigger a run manually any time from the Actions tab
-# ("Run workflow") — handy right after adding new channels.
+# ("Run workflow") — handy right after adding new channels, or any time
+# you want fresher data than the schedule below gives you (no code change
+# or redeploy needed — it just calls the same endpoint on demand).
+#
+# Schedule: 6 runs/day, spaced through the day IST (India Standard Time,
+# UTC+5:30) — cron itself is always UTC, so each line below is commented
+# with the IST time it actually fires at. Both platforms run at every slot.
+# Note: YouTube's free quota (10,000 units/day) comfortably absorbs 6
+# runs/day — a run costs only a few units per channel (see
+# backend/README.md's quota section). Instagram scraping via Apify is
+# metered by paid credit instead of a free quota, so running it this often
+# will use up the $5/month free credit faster than a single daily run
+# would — if that becomes a problem, drop the "Trigger Instagram scrape"
+# step down to fewer of these slots, or move it to its own once-daily
+# workflow.
+#
+# To change the times: edit the six `cron:` lines below (each is
+# `minute hour * * *` in UTC — subtract 5:30 from the IST time you want,
+# e.g. 10:00 IST -> 04:30 UTC -> "30 4 * * *"), or just delete/add lines.
 
-name: Daily competitor scrape
+name: Competitor scrape
 
 on:
   schedule:
-    # 06:00 UTC daily. Edit to taste — cron is always UTC regardless of
-    # where your server or your audience is.
-    - cron: "0 6 * * *"
+    - cron: "30 4 * * *"   # 10:00 IST
+    - cron: "0 7 * * *"    # 12:30 IST
+    - cron: "30 9 * * *"   # 15:00 IST
+    - cron: "0 12 * * *"   # 17:30 IST
+    - cron: "30 14 * * *"  # 20:00 IST
+    - cron: "30 16 * * *"  # 22:00 IST
   workflow_dispatch: {}
 
 jobs:

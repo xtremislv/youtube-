@@ -93,18 +93,22 @@ same idea, same env var.*
    `CORS_ORIGINS` to this Vercel URL, then redeploy the backend so it
    actually accepts requests from it.
 
-### A4. Daily scrape — GitHub Actions
+### A4. Scheduled scrape — GitHub Actions
 
 Render's free tier doesn't include cron jobs, and an in-process scheduler
-would never fire on a service that sleeps — so the daily trigger lives
-outside both, as a scheduled GitHub Actions workflow that just wakes the
-backend with an HTTPS request.
+would never fire on a service that sleeps — so the trigger lives outside
+both, as a scheduled GitHub Actions workflow that just wakes the backend
+with an HTTPS request.
 
 1. Repo → Settings → Secrets and variables → Actions → New repository secret:
    - `BACKEND_URL` = your Render backend URL (same as A3 step 3, no `/api`).
    - `SCRAPE_TRIGGER_API_KEY` = the same value you put in Render (A2 step 3).
-2. That's it — `.github/workflows/daily-scrape.yml` runs at 06:00 UTC daily
-   and on-demand (Actions tab → "Daily competitor scrape" → Run workflow).
+2. That's it — `.github/workflows/daily-scrape.yml` runs 6 times a day
+   (10:00, 12:30, 15:00, 17:30, 20:00 and 22:00 IST) and on-demand any time
+   from the Actions tab ("Competitor scrape" → Run workflow) — no redeploy
+   needed to get fresh data on demand. Edit the `cron:` lines in that file
+   to change the times (each is UTC — the file's comments show the IST
+   conversion) or how many runs/day there are.
 3. `ENABLE_INTERNAL_SCHEDULER` should stay `false` on Render — it's the
    default in `render.yaml`.
 
