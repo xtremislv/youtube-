@@ -956,6 +956,51 @@ function ChannelCard({ channel: c, onToggleActive, onRemove }: { channel: Channe
   );
 }
 
+// ─── Channel Stat Card (Overperformance strip) ─────────────────────────────────
+// A compact, read-only cousin of ChannelCard above — sits in a horizontally
+// scrollable strip right under the Overperformance page's sticky filter bar
+// (see visibleChannels in App()) to give at-a-glance channel context (subs,
+// avg views, videos tracked, last published) for whichever channels the
+// current filter/grid is actually showing. No pause/remove actions here —
+// that's the Competitor Roster's job, this is just context for the grid.
+
+function ChannelStatCard({ channel: c }: { channel: Channel }) {
+  return (
+    <div className="video-card flex flex-col gap-2 p-3 shrink-0" style={{ width: 216 }}>
+      <div className="flex items-center gap-2">
+        <div className="flex items-center justify-center rounded-full size-8 shrink-0 text-[11px] font-bold" style={{ background: "var(--bg-elevated)", color: "var(--accent-light)" }}>
+          {c.avatarUrl ? <img src={c.avatarUrl} alt={c.name} className="size-8 rounded-full object-cover" /> : c.avatar}
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="text-xs font-semibold truncate" style={{ color: "var(--text-primary)", fontFamily: "Lora, serif" }}>{c.name}</div>
+          <div className="flex items-center gap-1.5 mt-0.5">
+            <span className={`text-[9px] px-1 rounded ${c.platform === "youtube" ? "badge-yt" : "badge-ig"}`}>{c.platform === "youtube" ? "YT" : "IG"}</span>
+            {c.cohort && <span className="filter-chip" style={{ fontSize: 9, padding: "1px 5px" }}>{c.cohort}</span>}
+          </div>
+        </div>
+      </div>
+      <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 pt-1.5" style={{ borderTop: "1px solid var(--border)" }}>
+        <div>
+          <div className="text-[9px]" style={{ color: "var(--text-muted)" }}>Subscribers</div>
+          <div className="text-xs font-bold font-mono" style={{ color: "var(--text-primary)" }}>{c.subs}</div>
+        </div>
+        <div>
+          <div className="text-[9px]" style={{ color: "var(--text-muted)" }}>Avg views</div>
+          <div className="text-xs font-bold font-mono" style={{ color: "var(--text-primary)" }}>{fmtViewsN(c.avgViews)}</div>
+        </div>
+        <div>
+          <div className="text-[9px]" style={{ color: "var(--text-muted)" }}>Tracked</div>
+          <div className="text-xs font-mono" style={{ color: "var(--text-muted)" }}>{c.videoCount} vid{c.videoCount === 1 ? "" : "s"}</div>
+        </div>
+        <div>
+          <div className="text-[9px]" style={{ color: "var(--text-muted)" }}>Last pub.</div>
+          <div className="text-xs font-mono" style={{ color: "var(--text-muted)" }}>{c.lastPublishedAt ? fmtDate(c.lastPublishedAt) : "—"}</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Coming Soon (placeholder sections) ────────────────────────────────────────
 // The Figma design ships six nav sections but only "Overperformance" had a
 // real view behind it. Rather than leave the other four (Trend & Velocity,
@@ -1087,6 +1132,20 @@ export default function App() {
     }, 300);
     return () => window.clearTimeout(handle);
   }, [filters, videosRefetchTick]);
+
+  // Backs the channel strip under the Overperformance page's filter bar: the
+  // explicitly selected channels when the "Channels" filter is narrowed,
+  // otherwise whichever tracked channels actually have a video in the
+  // current (filtered) results — so the strip always matches what's in the
+  // grid below it rather than dumping every tracked channel onto the page.
+  const visibleChannels = useMemo(() => {
+    if (filters.channels.length > 0) {
+      const selected = new Set(filters.channels);
+      return channels.filter(c => selected.has(c.id));
+    }
+    const shownIds = new Set(videos.map(v => v.channelId));
+    return channels.filter(c => shownIds.has(c.id));
+  }, [channels, filters.channels, videos]);
 
   useEffect(() => {
     function handler(e: MouseEvent) {
@@ -1234,6 +1293,12 @@ export default function App() {
 
             {/* Content */}
             <div className="flex-1 overflow-y-auto">
+              {visibleChannels.length > 0 && (
+                <div className="px-5 pt-4 pb-1 flex items-stretch gap-3 overflow-x-auto">
+                  {visibleChannels.map(c => <ChannelStatCard key={c.id} channel={c} />)}
+                </div>
+              )}
+
               {filters.showChart && <ChartPanel videos={videos} />}
 
               {videosError ? (
