@@ -66,7 +66,17 @@ def trigger_manual_scrape(
     last_run = query.order_by(ScrapeRun.started_at.desc()).first()
 
     if last_run is not None:
-        elapsed_seconds = (dt.datetime.utcnow() - last_run.started_at).total_seconds()
+        # Postgres columns are DateTime(timezone=True), so a real deploy
+        # reads started_at back as timezone-aware — but the sqlite used by
+        # the test suite always hands back naive datetimes regardless of
+        # column type, and older rows may predate this fix either way.
+        # Coerce to aware-UTC on both sides so the subtraction never raises
+        # "can't subtract offset-naive and offset-aware datetimes".
+        started_at = last_run.started_at
+        if started_at.tzinfo is None:
+            started_at = started_at.replace(tzinfo=dt.timezone.utc)
+        now = dt.datetime.now(dt.timezone.utc)
+        elapsed_seconds = (now - started_at).total_seconds()
         remaining_seconds = settings.manual_scrape_cooldown_seconds - elapsed_seconds
         if remaining_seconds > 0:
             raise HTTPException(
