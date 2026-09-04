@@ -599,11 +599,12 @@ interface Filters {
   format: string;
 }
 
-function FilterBar({ filters, setFilters, viewMode, setViewMode, totalResults, channels }: {
+function FilterBar({ filters, setFilters, viewMode, setViewMode, shownCount, totalResults, channels }: {
   filters: Filters;
   setFilters: (f: Filters) => void;
   viewMode: ViewMode;
   setViewMode: (v: ViewMode) => void;
+  shownCount: number;
   totalResults: number;
   channels: Channel[];
 }) {
@@ -771,9 +772,13 @@ function FilterBar({ filters, setFilters, viewMode, setViewMode, totalResults, c
       {/* Spacer */}
       <div className="flex-1 min-w-0" />
 
-      {/* Result count */}
+      {/* Result count — the API caps a single page at PAGE_SIZE (see the
+          "Load more" button below the grid), so this must show how many of
+          the true total match are actually on screen, not just shownCount
+          alone — otherwise a 500-video cap silently masquerades as "the
+          total", which is exactly the bug this replaced. */}
       <span className="text-xs shrink-0" style={{ color: "var(--text-muted)", fontFamily: "JetBrains Mono, monospace" }}>
-        {totalResults} videos
+        {shownCount < totalResults ? `${shownCount} of ${totalResults} videos` : `${totalResults} videos`}
       </span>
 
       {/* View mode */}
@@ -1137,6 +1142,16 @@ function ChannelStatCard({ channel: c }: { channel: Channel }) {
 
 const EMPTY_VIDEOS: Video[] = [];
 
+// How many videos one page fetches. The backend caps a single request at
+// 2000 (see backend/app/routers/videos.py) and previously the frontend
+// never sent a `limit` at all, silently falling back to its default of
+// 500 — anything past that was invisible in the grid no matter how many
+// videos actually matched the filters. Paging in smaller chunks with an
+// explicit "Load more" button keeps both the request size and the number
+// of cards rendered at once reasonable regardless of how large the table
+// grows.
+const VIDEOS_PAGE_SIZE = 60;
+
 export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [activeSection, setActiveSection] = useState("Overperformance");
@@ -1162,7 +1177,9 @@ export default function App() {
   const [systemStatus, setSystemStatus] = useState<SystemStatus | null>(null);
 
   const [videos, setVideos] = useState<Video[]>(EMPTY_VIDEOS);
+  const [videosTotal, setVideosTotal] = useState(0);
   const [videosLoading, setVideosLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [videosError, setVideosError] = useState<string | null>(null);
 
   const [notifVideos, setNotifVideos] = useState<Video[]>(EMPTY_VIDEOS);
@@ -1254,9 +1271,12 @@ export default function App() {
         format: filters.format,
         sortBy: filters.sortBy,
         metric: filters.metric,
+        limit: VIDEOS_PAGE_SIZE,
+        offset: 0,
       })
         .then(result => {
           setVideos(result.videos);
+          setVideosTotal(result.total);
           setVideosLoading(false);
         })
         .catch(err => {
@@ -1266,6 +1286,36 @@ export default function App() {
     }, 300);
     return () => window.clearTimeout(handle);
   }, [filters, videosRefetchTick]);
+
+  // "Load more" button below the grid — fetches the next VIDEOS_PAGE_SIZE
+  // videos at the current offset (videos.length) and appends rather than
+  // replaces. Uses the same filters as the main fetch above so the next
+  // page honors whatever's currently selected.
+  const handleLoadMore = useCallback(() => {
+    if (loadingMore || videosLoading || videos.length >= videosTotal) return;
+    setLoadingMore(true);
+    fetchVideos({
+      platform: filters.platform,
+      channels: filters.channels,
+      dateFrom: filters.dateFrom,
+      dateTo: filters.dateTo,
+      viewsThreshold: filters.viewsThreshold,
+      format: filters.format,
+      sortBy: filters.sortBy,
+      metric: filters.metric,
+      limit: VIDEOS_PAGE_SIZE,
+      offset: videos.length,
+    })
+      .then(result => {
+        setVideos(prev => [...prev, ...result.videos]);
+        setVideosTotal(result.total);
+        setLoadingMore(false);
+      })
+      .catch(err => {
+        setVideosError(err instanceof ApiError ? err.message : "Could not load more videos.");
+        setLoadingMore(false);
+      });
+  }, [filters, videos.length, videosTotal, loadingMore, videosLoading]);
 
   // Backs the channel strip under the Overperformance page's filter bar: the
   // explicitly selected channels when the "Channels" filter is narrowed,
@@ -1421,7 +1471,7 @@ export default function App() {
         ) : (
           <>
             {/* Filter Bar */}
-            <FilterBar filters={filters} setFilters={setFilters} viewMode={viewMode} setViewMode={setViewMode} totalResults={videos.length} channels={channels} />
+            <FilterBar filters={filters} setFilters={setFilters} viewMode={viewMode} setViewMode={setViewMode} shownCount={videos.length} totalResults={videosTotal} channels={channels} />
 
             {/* Content */}
             <div className="flex-1 overflow-y-auto">
@@ -1453,14 +1503,36 @@ export default function App() {
                       : "Try adjusting the date range or views threshold."}
                   </div>
                 </div>
-              ) : viewMode === "grid" ? (
-                <div className="p-5 grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))" }}>
-                  {videos.map(v => <VideoCard key={v.id} video={v} mode="grid" metric={filters.metric} />)}
-                </div>
               ) : (
-                <div className="p-5 flex flex-col gap-2">
-                  {videos.map(v => <VideoCard key={v.id} video={v} mode="list" metric={filters.metric} />)}
-                </div>
+                <>
+                  {viewMode === "grid" ? (
+                    <div className="p-5 grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))" }}>
+                      {videos.map(v => <VideoCard key={v.id} video={v} mode="grid" metric={filters.metric} />)}
+                    </div>
+                  ) : (
+                    <div className="p-5 flex flex-col gap-2">
+                      {videos.map(v => <VideoCard key={v.id} video={v} mode="list" metric={filters.metric} />)}
+                    </div>
+                  )}
+                  {videos.length < videosTotal && (
+                    <div className="flex flex-col items-center gap-2 pb-8">
+                      <button
+                        onClick={handleLoadMore}
+                        disabled={loadingMore}
+                        className="px-4 py-2 rounded-lg text-xs font-semibold transition-opacity"
+                        style={{
+                          background: "var(--bg-elevated)",
+                          border: "1px solid var(--border)",
+                          color: "var(--text-secondary)",
+                          fontFamily: "Inter, sans-serif",
+                          opacity: loadingMore ? 0.6 : 1,
+                          cursor: loadingMore ? "default" : "pointer",
+                        }}>
+                        {loadingMore ? "Loading…" : `Load more (${videosTotal - videos.length} remaining)`}
+                      </button>
+                    </div>
+                  )}
+                </>
               )}
             </div>
           </>
