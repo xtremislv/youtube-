@@ -348,15 +348,15 @@ function Sidebar({
       <div className="flex items-center justify-between px-4 py-4 shrink-0" style={{ borderBottom: "1px solid var(--border)" }}>
         <div className="flex items-center gap-2.5">
           <div className="relative flex items-center justify-center size-8 shrink-0">
-            {/* TW-DASH mark — public/tw-logo.png, already a circular black
+            {/* TW-Labs mark — public/tw-logo.png, already a circular black
                 mark with transparent corners, so no background/clip needed
                 here (unlike the old inline SVG glyph it replaces). */}
-            <img src="/tw-logo.png" alt="TW-DASH" className="size-8" />
+            <img src="/tw-logo.png" alt="TW-Labs" className="size-8" />
             <span className="notification-dot" style={{ position: "absolute", top: 3, right: 3, width: 7, height: 7, background: "#c0c1ff", borderRadius: "50%", border: "1.5px solid var(--bg-panel)" }} />
           </div>
           <div>
             <div className="text-sm font-bold leading-none" style={{ color: "var(--text-primary)", fontFamily: "Lora, serif" }}>
-              TW<span style={{ color: "#c0c1ff" }}>-DASH</span>
+              TW<span style={{ color: "#c0c1ff" }}>-Labs</span>
             </div>
           </div>
         </div>
@@ -1099,11 +1099,33 @@ function ChannelCard({ channel: c, onToggleActive, onRemove }: { channel: Channe
 // (see visibleChannels in App()) to give at-a-glance channel context (subs,
 // avg views, videos tracked, last published) for whichever channels the
 // current filter/grid is actually showing. No pause/remove actions here —
-// that's the Competitor Roster's job, this is just context for the grid.
+// that's the Competitor Roster's job. Clicking the card itself narrows the
+// grid to just this channel (sets filters.channels to [c.id]) — a shortcut
+// for the same thing the "Channels" dropdown in the filter bar already does,
+// since picking one channel out of a strip you're already looking at is
+// faster than opening a dropdown and finding it in a list.
 
-function ChannelStatCard({ channel: c }: { channel: Channel }) {
+function ChannelStatCard({ channel: c, active, onClick }: { channel: Channel; active: boolean; onClick: () => void }) {
   return (
-    <div className="video-card flex flex-col gap-2 p-3 shrink-0" style={{ width: 216 }}>
+    <div
+      className="video-card flex flex-col gap-2 p-3 shrink-0"
+      style={{
+        width: 216,
+        cursor: "pointer",
+        borderColor: active ? "var(--accent)" : undefined,
+        boxShadow: active ? "0 0 0 1px var(--accent)" : undefined,
+      }}
+      onClick={onClick}
+      role="button"
+      tabIndex={0}
+      title={active ? `Showing only ${c.name} — pick another channel or clear in the filter bar to change` : `Show only videos from ${c.name}`}
+      onKeyDown={e => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onClick();
+        }
+      }}
+    >
       <div className="flex items-center gap-2">
         <div className="flex items-center justify-center rounded-full size-8 shrink-0 text-[11px] font-bold" style={{ background: "var(--bg-elevated)", color: "var(--accent-light)" }}>
           {c.avatarUrl ? <img src={c.avatarUrl} alt={c.name} className="size-8 rounded-full object-cover" /> : c.avatar}
@@ -1477,7 +1499,14 @@ export default function App() {
             <div className="flex-1 overflow-y-auto">
               {visibleChannels.length > 0 && (
                 <div className="px-5 pt-4 pb-1 flex items-stretch gap-3 overflow-x-auto">
-                  {visibleChannels.map(c => <ChannelStatCard key={c.id} channel={c} />)}
+                  {visibleChannels.map(c => (
+                    <ChannelStatCard
+                      key={c.id}
+                      channel={c}
+                      active={filters.channels.length === 1 && filters.channels[0] === c.id}
+                      onClick={() => setFilters({ ...filters, channels: [c.id] })}
+                    />
+                  ))}
                 </div>
               )}
 
