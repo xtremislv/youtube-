@@ -1,4 +1,4 @@
-# Vortex.ai — Competitor Video Intelligence Dashboard
+# TW-DASH — Competitor Video Intelligence Dashboard
 
 An interactive dashboard for tracking YouTube and Instagram competitors:
 pick a platform (or both), pick one or more channels, set a date range, and

@@ -1,5 +1,9 @@
 {
+  "title": "TW-DASH — Competitor Video Intelligence",
   "description": "Gain insights into social media performance with an interactive dashboard that analyzes top-performing YouTube and Instagram videos based on customizable filters.",
+  "icons": {
+    "icon": "/favicon.png"
+  },
   "robots": {
     "index": false
   },

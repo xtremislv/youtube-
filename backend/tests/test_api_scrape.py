@@ -94,3 +94,32 @@ def test_manual_scrape_cooldown_is_scoped_per_platform(client, db_session):
 def test_manual_scrape_rejects_unknown_platform(client):
     resp = client.post("/api/scrape/run-manual", params={"platform": "tiktok"})
     assert resp.status_code == 400
+
+
+def test_instagram_scraping_paused_by_sidebar_toggle_is_skipped_not_run(client):
+    # The sidebar's "Apify Usage" toggle (PATCH /api/settings/scraper) — see
+    # app/scrape_service.py's run_daily_scrape. Instagram should come back
+    # "skipped" (no Apify call attempted) while YouTube runs as normal;
+    # flipping it back on should resume Instagram immediately.
+    client.patch("/api/settings/scraper", json={"instagram_scraping_enabled": False})
+
+    resp = client.post("/api/scrape/run", headers={"X-API-Key": "test-secret"})
+    assert resp.status_code == 200, resp.text
+    statuses = {r["platform"]: r["status"] for r in resp.json()["runs"]}
+    assert statuses == {"youtube": "success", "instagram": "skipped"}
+
+    ig_run = next(r for r in resp.json()["runs"] if r["platform"] == "instagram")
+    assert ig_run["apifyRunsStarted"] == 0
+    assert "paused" in ig_run["errorMessage"].lower()
+
+    client.patch("/api/settings/scraper", json={"instagram_scraping_enabled": True})
+    resumed = client.post("/api/scrape/run", headers={"X-API-Key": "test-secret"})
+    statuses = {r["platform"]: r["status"] for r in resumed.json()["runs"]}
+    assert statuses == {"youtube": "success", "instagram": "success"}
+
+
+def test_instagram_paused_toggle_also_blocks_manual_refresh(client):
+    client.patch("/api/settings/scraper", json={"instagram_scraping_enabled": False})
+    resp = client.post("/api/scrape/run-manual", params={"platform": "instagram"})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["runs"][0]["status"] == "skipped"

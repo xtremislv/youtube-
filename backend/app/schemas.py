@@ -135,3 +135,15 @@ class ScrapeTriggerResponse(BaseModel):
 class CohortOut(BaseModel):
     label: str
     count: int
+
+
+# ── Workspace settings (sidebar toggles) ────────────────────────────────────
+
+
+class WorkspaceSettingsOut(CamelModel):
+    instagram_scraping_enabled: bool
+    updated_at: dt.datetime
+
+
+class WorkspaceSettingsUpdate(BaseModel):
+    instagram_scraping_enabled: bool

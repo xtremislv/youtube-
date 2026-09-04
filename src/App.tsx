@@ -5,6 +5,8 @@ import {
   fetchCohorts,
   fetchVideos,
   fetchSystemStatus,
+  fetchScraperSettings,
+  setInstagramScrapingEnabled,
   createChannel,
   deleteChannel,
   updateChannel,
@@ -14,6 +16,7 @@ import {
   type ApiVideo as Video,
   type CohortSummary,
   type SystemStatus,
+  type ScraperSettings,
 } from "@/lib/api";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -272,6 +275,31 @@ function BarChart({ videos }: { videos: Video[] }) {
   );
 }
 
+// ─── Toggle Switch ────────────────────────────────────────────────────────────
+// Small hand-rolled on/off switch (no library) — used by the sidebar's
+// "Apify Usage" toggle. A native checkbox styled as a switch would work too,
+// but a button gives clearer control over the disabled/pending look.
+
+function ToggleSwitch({ checked, onChange, disabled, label }: { checked: boolean; onChange: () => void; disabled?: boolean; label?: string }) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      aria-label={label}
+      onClick={onChange}
+      disabled={disabled}
+      className="relative shrink-0 transition-colors disabled:opacity-50 disabled:cursor-wait"
+      style={{ width: 34, height: 18, borderRadius: 999, background: checked ? "var(--accent)" : "var(--bg-active)", border: "1px solid var(--border)" }}
+    >
+      <span
+        className="absolute rounded-full transition-transform"
+        style={{ width: 12, height: 12, top: 2, left: 2, background: checked ? "#0d0096" : "var(--text-muted)", transform: checked ? "translateX(16px)" : "translateX(0)" }}
+      />
+    </button>
+  );
+}
+
 // ─── Sidebar ──────────────────────────────────────────────────────────────────
 
 const COHORT_COLORS = ["#c0c1ff", "#ffb3ad", "#ffb0cd", "#8fe3c7", "#ffd88f", "#a8c8ff"];
@@ -284,9 +312,23 @@ interface SidebarProps {
   cohorts: CohortSummary[];
   quotaPct: number | null;
   workspaceName: string;
+  instagramScrapingEnabled: boolean | null;
+  onToggleInstagramScraping: () => void;
+  togglingScraper: boolean;
 }
 
-function Sidebar({ open, activeSection, setActiveSection, overperformBadge, cohorts, quotaPct, workspaceName }: SidebarProps) {
+function Sidebar({
+  open,
+  activeSection,
+  setActiveSection,
+  overperformBadge,
+  cohorts,
+  quotaPct,
+  workspaceName,
+  instagramScrapingEnabled,
+  onToggleInstagramScraping,
+  togglingScraper,
+}: SidebarProps) {
   const navLinks = [
     { label: "Overperformance", icon: "chart", badge: overperformBadge },
     { label: "Competitor Roster", icon: "people", badge: null as number | null },
@@ -310,15 +352,16 @@ function Sidebar({ open, activeSection, setActiveSection, overperformBadge, coho
       {/* Brand */}
       <div className="flex items-center justify-between px-4 py-4 shrink-0" style={{ borderBottom: "1px solid var(--border)" }}>
         <div className="flex items-center gap-2.5">
-          <div className="relative flex items-center justify-center rounded-lg size-8 shrink-0" style={{ background: "var(--bg-active)" }}>
-            <svg width="14" height="14" viewBox="0 0 16.6667 16.6667" fill="none">
-              <path d={svgPaths.p367d180} fill="#c0c1ff" />
-            </svg>
+          <div className="relative flex items-center justify-center size-8 shrink-0">
+            {/* TW-DASH mark — public/tw-logo.png, already a circular black
+                mark with transparent corners, so no background/clip needed
+                here (unlike the old inline SVG glyph it replaces). */}
+            <img src="/tw-logo.png" alt="TW-DASH" className="size-8" />
             <span className="notification-dot" style={{ position: "absolute", top: 3, right: 3, width: 7, height: 7, background: "#c0c1ff", borderRadius: "50%", border: "1.5px solid var(--bg-panel)" }} />
           </div>
           <div>
             <div className="text-sm font-bold leading-none" style={{ color: "var(--text-primary)", fontFamily: "Lora, serif" }}>
-              Vortex<span style={{ color: "#c0c1ff" }}>.ai</span>
+              TW<span style={{ color: "#c0c1ff" }}>-DASH</span>
             </div>
             <div className="text-[10px] tracking-widest uppercase mt-0.5" style={{ color: "var(--text-muted)", fontFamily: "Lora, serif" }}>Outperform Studio</div>
           </div>
@@ -386,6 +429,30 @@ function Sidebar({ open, activeSection, setActiveSection, overperformBadge, coho
             </button>
           ))
         )}
+      </div>
+
+      {/* Apify Usage — pauses Instagram (Apify) scraping to save Apify
+          credit. Enforced server-side in app/scrape_service.py so it holds
+          for the GitHub Actions schedule too, not just this dashboard's own
+          "Refresh data" button — see WorkspaceSettings in
+          backend/app/models.py. */}
+      <div className="px-2 pt-2 shrink-0">
+        <div className="rounded-xl p-3" style={{ background: "#1c1f29" }}>
+          <div className="flex items-center justify-between mb-1.5">
+            <span className="text-[10px] tracking-widest uppercase" style={{ color: "var(--text-secondary)", fontFamily: "Lora, serif" }}>Apify Usage</span>
+            <ToggleSwitch
+              checked={instagramScrapingEnabled ?? true}
+              onChange={onToggleInstagramScraping}
+              disabled={togglingScraper || instagramScrapingEnabled == null}
+              label="Toggle Instagram (Apify) scraping"
+            />
+          </div>
+          <div className="text-[11px] leading-snug" style={{ color: "var(--text-muted)", fontFamily: "Lora, serif" }}>
+            {instagramScrapingEnabled === false
+              ? "Instagram scraping paused — refresh & schedule skip Apify."
+              : "Instagram scraping runs on refresh & the daily schedule."}
+          </div>
+        </div>
       </div>
 
       {/* API Quota */}
@@ -1063,11 +1130,31 @@ export default function App() {
   const [refreshMessage, setRefreshMessage] = useState<{ text: string; kind: "success" | "error" } | null>(null);
   const [videosRefetchTick, setVideosRefetchTick] = useState(0);
 
+  // The sidebar's "Apify Usage" toggle — null until the first load resolves,
+  // so ToggleSwitch can stay disabled rather than flash a wrong default.
+  const [scraperSettings, setScraperSettings] = useState<ScraperSettings | null>(null);
+  const [togglingScraper, setTogglingScraper] = useState(false);
+
   const refreshChannelsAndCohorts = useCallback(() => {
     fetchChannels().then(setChannels).catch(() => {});
     fetchCohorts().then(setCohorts).catch(() => {});
     fetchSystemStatus().then(setSystemStatus).catch(() => {});
+    fetchScraperSettings().then(setScraperSettings).catch(() => {});
   }, []);
+
+  const handleToggleInstagramScraping = useCallback(async () => {
+    if (!scraperSettings || togglingScraper) return;
+    const next = !scraperSettings.instagramScrapingEnabled;
+    setTogglingScraper(true);
+    try {
+      setScraperSettings(await setInstagramScrapingEnabled(next));
+    } catch {
+      // Leave the switch as-is on failure — the next refreshChannelsAndCohorts
+      // (initial load, or after a manual refresh) resyncs it from the server.
+    } finally {
+      setTogglingScraper(false);
+    }
+  }, [scraperSettings, togglingScraper]);
 
   // "Refresh data" button in the top bar — see src/lib/api.ts's
   // triggerManualScrape docstring for why this hits a different,
@@ -1081,10 +1168,14 @@ export default function App() {
       const result = await triggerManualScrape();
       const totalVideos = result.runs.reduce((sum, r) => sum + r.videosUpserted, 0);
       const failed = result.runs.filter(r => r.status === "failed");
+      const skippedInstagram = result.runs.some(r => r.platform === "instagram" && r.status === "skipped");
       setRefreshMessage(
         failed.length > 0
           ? { text: failed[0].errorMessage ?? "Refresh finished with errors.", kind: "error" }
-          : { text: `Refreshed — ${totalVideos} video${totalVideos === 1 ? "" : "s"} updated.`, kind: "success" },
+          : {
+              text: `Refreshed — ${totalVideos} video${totalVideos === 1 ? "" : "s"} updated.${skippedInstagram ? " Instagram paused." : ""}`,
+              kind: "success",
+            },
       );
       refreshChannelsAndCohorts();
       setVideosRefetchTick(t => t + 1);
@@ -1181,6 +1272,9 @@ export default function App() {
         cohorts={cohorts}
         quotaPct={systemStatus?.youtubeQuotaPct ?? null}
         workspaceName={systemStatus?.workspaceName ?? "Competitor Dashboard"}
+        instagramScrapingEnabled={scraperSettings?.instagramScrapingEnabled ?? null}
+        onToggleInstagramScraping={handleToggleInstagramScraping}
+        togglingScraper={togglingScraper}
       />
 
       {/* Main */}

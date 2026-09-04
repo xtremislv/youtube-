@@ -27,8 +27,7 @@ function Container4() {
     <div className="content-stretch flex flex-col items-start relative shrink-0 w-full" data-name="Container">
       <div className="[word-break:break-word] flex flex-col font-['Liberation_Serif:Bold',sans-serif] justify-center leading-[0] not-italic relative shrink-0 text-[#dfe2ef] text-[18px] tracking-[-0.45px] whitespace-nowrap">
         <p>
-          <span className="leading-[18px]">Vortex</span>
-          <span className="[word-break:break-word] font-['Liberation_Serif:Bold',sans-serif] leading-[18px] not-italic text-[#c0c1ff]">.ai</span>
+          <span className="leading-[18px]">TW-DASH</span>
         </p>
       </div>
     </div>

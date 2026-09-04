@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from app.config import Settings
 from app.models import Channel, ScrapeRun
+from app.settings_service import get_workspace_settings
 
 logger = logging.getLogger(__name__)
 
@@ -26,13 +27,34 @@ def run_daily_scrape(db: Session, settings: Settings, *, platform: str | None = 
     GitHub Actions workflow to run them as separate jobs/steps so a slow
     Instagram batch doesn't delay fresh YouTube numbers, and so a missing
     Apify token doesn't block YouTube scraping or vice versa).
+
+    If the sidebar's "Apify Usage" toggle has paused Instagram scraping
+    (WorkspaceSettings.instagram_scraping_enabled, see app/settings_service.py),
+    an Instagram request is recorded as a "skipped" ScrapeRun rather than
+    actually calling Apify — this is the one choke point every trigger (the
+    API-key-protected /run the cron uses, the cooldown-limited /run-manual
+    the dashboard button uses, and the in-process scheduler) goes through,
+    so the toggle reliably stops Apify spend regardless of what fired the
+    scrape. YouTube is never affected by this toggle.
     """
     runs: list[ScrapeRun] = []
     if platform in (None, "youtube"):
         runs.append(_scrape_platform(db, settings, "youtube"))
     if platform in (None, "instagram"):
-        runs.append(_scrape_platform(db, settings, "instagram"))
+        if get_workspace_settings(db).instagram_scraping_enabled:
+            runs.append(_scrape_platform(db, settings, "instagram"))
+        else:
+            runs.append(_skipped_run(db, "instagram", "Instagram scraping is paused (Apify Usage toggle) — no Apify run was started."))
     return runs
+
+
+def _skipped_run(db: Session, platform: str, reason: str) -> ScrapeRun:
+    now = dt.datetime.utcnow()
+    run = ScrapeRun(platform=platform, status="skipped", started_at=now, finished_at=now, error_message=reason)
+    db.add(run)
+    db.commit()
+    db.refresh(run)
+    return run
 
 
 def _scrape_platform(db: Session, settings: Settings, platform: str) -> ScrapeRun:

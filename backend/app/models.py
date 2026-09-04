@@ -1,12 +1,16 @@
 """
 ORM models.
 
-Three tables, deliberately kept small:
+Four tables, deliberately kept small:
 
 - ``Channel``  — a tracked YouTube channel or Instagram profile.
 - ``Video``    — one scraped video/reel, always belonging to a Channel.
 - ``ScrapeRun``— one audit-log row per scrape attempt (used for the sidebar
   "API Quota" widget and for debugging a failed daily run).
+- ``WorkspaceSettings`` — a single-row table for dashboard-toggleable
+  switches that need to persist and take effect immediately (as opposed to
+  ``app/config.py``'s ``Settings``, which is env-var config fixed at deploy
+  time). Currently just one switch: pausing Instagram (Apify) scraping.
 
 Primary keys are human-readable strings of the form ``"<platform>:<external
 id>"`` (e.g. ``"youtube:UC..."`` / ``"instagram:mkbhd"``) rather than opaque
@@ -119,3 +123,23 @@ class ScrapeRun(Base):
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     __table_args__ = (Index("ix_scrape_runs_started_at", "started_at"),)
+
+
+class WorkspaceSettings(Base):
+    """Always exactly one row, with id=1 — see app/settings_service.py for
+    the get-or-create helper every reader/writer goes through rather than
+    querying this table directly."""
+
+    __tablename__ = "workspace_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    # The sidebar's "Apify Usage" toggle. Enforced in app/scrape_service.py's
+    # run_daily_scrape — the one function POST /api/scrape/run (the GitHub
+    # Actions schedule), POST /api/scrape/run-manual (the dashboard's
+    # "Refresh data" button), and the in-process scheduler all call — so
+    # flipping this off stops Instagram/Apify runs from *any* trigger, not
+    # just the dashboard button, without touching YouTube scraping.
+    instagram_scraping_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    updated_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), default=dt.datetime.utcnow, onupdate=dt.datetime.utcnow
+    )

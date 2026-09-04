@@ -16,7 +16,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
-from app.routers import channels, health, scrape, system, videos
+from app.routers import channels, health, scrape, settings as settings_router, system, videos
 from app.scheduler import start_scheduler, stop_scheduler
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -32,7 +32,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Competitor Video Intelligence API",
-    description="Backend for the Vortex.ai competitor dashboard: tracked channels, scraped videos, and overperformance analytics.",
+    description="Backend for the TW-DASH competitor dashboard: tracked channels, scraped videos, and overperformance analytics.",
     version="1.0.0",
     lifespan=lifespan,
 )
@@ -51,6 +51,7 @@ app.include_router(channels.router)
 app.include_router(videos.router)
 app.include_router(scrape.router)
 app.include_router(system.router)
+app.include_router(settings_router.router)
 
 
 @app.get("/")

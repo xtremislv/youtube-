@@ -112,6 +112,11 @@ export interface ScrapeTriggerResult {
   runs: ScrapeRun[];
 }
 
+export interface ScraperSettings {
+  instagramScrapingEnabled: boolean;
+  updatedAt: string;
+}
+
 class ApiError extends Error {
   constructor(
     message: string,
@@ -204,6 +209,23 @@ export function fetchSystemStatus(): Promise<SystemStatus> {
 export function triggerManualScrape(platform?: Exclude<Platform, "all">): Promise<ScrapeTriggerResult> {
   const params = platform ? `?platform=${platform}` : "";
   return request<ScrapeTriggerResult>(`/api/scrape/run-manual${params}`, { method: "POST" });
+}
+
+/**
+ * The sidebar's "Apify Usage" toggle. Backed by GET/PATCH /api/settings/scraper
+ * (see WorkspaceSettings in backend/app/models.py) — a DB-persisted switch,
+ * not a per-browser preference, so it takes effect for every scrape trigger
+ * (the GitHub Actions schedule included), not just this browser tab.
+ */
+export function fetchScraperSettings(): Promise<ScraperSettings> {
+  return request<ScraperSettings>("/api/settings/scraper");
+}
+
+export function setInstagramScrapingEnabled(enabled: boolean): Promise<ScraperSettings> {
+  return request<ScraperSettings>("/api/settings/scraper", {
+    method: "PATCH",
+    body: JSON.stringify({ instagram_scraping_enabled: enabled }),
+  });
 }
 
 export { ApiError };
