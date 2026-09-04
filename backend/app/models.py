@@ -90,6 +90,8 @@ class Video(Base):
     # app/overperformance.py.
     avg_views_baseline: Mapped[float | None] = mapped_column(Float, nullable=True)
     overperform_ratio: Mapped[float | None] = mapped_column(Float, nullable=True, index=True)
+    median_views_baseline: Mapped[float | None] = mapped_column(Float, nullable=True)
+    overperform_ratio_median: Mapped[float | None] = mapped_column(Float, nullable=True, index=True)
 
     first_seen_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=dt.datetime.utcnow)
     scraped_at: Mapped[dt.datetime] = mapped_column(

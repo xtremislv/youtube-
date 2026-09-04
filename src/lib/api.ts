@@ -40,6 +40,8 @@ export interface ApiChannel {
   lastPublishedAt: string | null; // "YYYY-MM-DD"
 }
 
+export type OverperformMetric = "average" | "median";
+
 export interface ApiVideo {
   id: string;
   channelId: string;
@@ -50,12 +52,14 @@ export interface ApiVideo {
   url: string | null;
   views: number;
   avgViews: number | null;
+  medianViews: number | null;
   likes: number | null;
   comments: number | null;
   publishedAt: string; // "YYYY-MM-DD"
   duration: string; // "MM:SS" or "H:MM:SS"
   format: "short" | "long" | "reel";
   overperformRatio: number | null;
+  overperformRatioMedian: number | null;
 }
 
 export interface VideoQuery {
@@ -66,6 +70,12 @@ export interface VideoQuery {
   viewsThreshold: string;
   format: string;
   sortBy: string;
+  // Which trailing baseline (mean vs. median) drives sortBy="ratio" and the
+  // returned overperformCount — see backend/app/routers/videos.py. Every
+  // video's response always carries both avgViews/overperformRatio *and*
+  // medianViews/overperformRatioMedian regardless of this, so a frontend
+  // toggle between them never needs a re-fetch on its own.
+  metric?: OverperformMetric;
   limit?: number;
   offset?: number;
 }
@@ -186,6 +196,7 @@ export function fetchVideos(query: VideoQuery): Promise<VideoListResult> {
   if (query.viewsThreshold) params.set("views_threshold", query.viewsThreshold);
   if (query.format !== "all") params.set("format", query.format);
   if (query.sortBy) params.set("sort_by", query.sortBy);
+  if (query.metric) params.set("metric", query.metric);
   if (query.limit) params.set("limit", String(query.limit));
   if (query.offset) params.set("offset", String(query.offset));
   return request<VideoListResult>(`/api/videos?${params.toString()}`);

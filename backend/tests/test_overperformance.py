@@ -16,6 +16,8 @@ def test_no_baseline_before_min_videos():
     assert results["v0"].avg_views_baseline is None
     assert results["v1"].avg_views_baseline is None
     assert results["v2"].avg_views_baseline is None
+    assert results["v2"].median_views_baseline is None
+    assert results["v2"].overperform_ratio_median is None
 
 
 def test_baseline_uses_trailing_window_only():
@@ -25,6 +27,22 @@ def test_baseline_uses_trailing_window_only():
     results = {r.id: r for r in compute_baselines(videos, window=10, min_videos=3)}
     assert results["v4"].avg_views_baseline == 1000.0
     assert results["v4"].overperform_ratio == 5.0
+    assert results["v4"].median_views_baseline == 1000.0
+    assert results["v4"].overperform_ratio_median == 5.0
+
+
+def test_median_baseline_ignores_a_single_viral_outlier():
+    # 5 prior videos: four at 1000 views, one viral one at 100,000. The mean
+    # gets dragged way up by the outlier; the median shrugs it off.
+    videos = [BaselineInput(id=f"v{i}", format="long", published_at=days(i), views=1000) for i in range(4)]
+    videos.append(BaselineInput(id="v4", format="long", published_at=days(4), views=100_000))
+    videos.append(BaselineInput(id="v5", format="long", published_at=days(5), views=3000))
+    results = {r.id: r for r in compute_baselines(videos, window=10, min_videos=3)}
+    # mean of [1000,1000,1000,1000,100000] = 20800; median = 1000
+    assert results["v5"].avg_views_baseline == 20_800.0
+    assert results["v5"].median_views_baseline == 1000.0
+    assert round(results["v5"].overperform_ratio, 4) == round(3000 / 20_800, 4)
+    assert results["v5"].overperform_ratio_median == 3.0
 
 
 def test_baseline_window_caps_lookback():
@@ -52,6 +70,8 @@ def test_zero_view_baseline_gives_no_ratio_not_a_crash():
     results = {r.id: r for r in compute_baselines(videos, window=10, min_videos=3)}
     assert results["v3"].avg_views_baseline == 0.0
     assert results["v3"].overperform_ratio is None
+    assert results["v3"].median_views_baseline == 0.0
+    assert results["v3"].overperform_ratio_median is None
 
 
 def test_is_overperforming():

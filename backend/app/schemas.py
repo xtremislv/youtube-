@@ -80,12 +80,16 @@ class VideoOut(CamelModel):
     url: str | None = Field(default=None, validation_alias="external_url", serialization_alias="url")
     views: int
     avg_views: float | None = Field(default=None, validation_alias="avg_views_baseline", serialization_alias="avgViews")
+    median_views: float | None = Field(
+        default=None, validation_alias="median_views_baseline", serialization_alias="medianViews"
+    )
     likes: int | None = None
     comments: int | None = None
     published_at: str = Field(serialization_alias="publishedAt")  # "YYYY-MM-DD" string, see formatting.py
     duration: str  # "MM:SS", see formatting.py
     format: str
     overperform_ratio: float | None = Field(default=None, serialization_alias="overperformRatio")
+    overperform_ratio_median: float | None = Field(default=None, serialization_alias="overperformRatioMedian")
 
     model_config = ConfigDict(alias_generator=_camel, populate_by_name=True, from_attributes=True, arbitrary_types_allowed=True)
 

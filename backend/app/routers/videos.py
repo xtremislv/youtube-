@@ -42,12 +42,14 @@ def _to_out(video: Video) -> VideoOut:
         url=video.external_url,
         views=video.views,
         avg_views=video.avg_views_baseline,
+        median_views=video.median_views_baseline,
         likes=video.likes,
         comments=video.comments,
         published_at=video.published_at.isoformat(),
         duration=format_duration(video.duration_seconds),
         format=video.format,
         overperform_ratio=video.overperform_ratio,
+        overperform_ratio_median=video.overperform_ratio_median,
     )
 
 
@@ -60,6 +62,14 @@ def list_videos(
     views_threshold: int | None = Query(default=None, ge=0),
     format: str = Query("all", description="'all' | 'long' | 'short' | 'reel'"),
     sort_by: str = Query("ratio", description="'ratio' | 'views' | 'date' | 'engagement'"),
+    metric: str = Query(
+        "average",
+        description=(
+            "'average' | 'median' — which trailing baseline drives sort_by='ratio' and the returned "
+            "overperformCount. Both avgViews/overperformRatio and medianViews/overperformRatioMedian are "
+            "always included on every video regardless of this, so the frontend can toggle instantly."
+        ),
+    ),
     overperform_ratio_threshold: float | None = Query(
         default=None, description="Overrides OVERPERFORM_RATIO_DEFAULT for the returned overperformCount only."
     ),
@@ -69,6 +79,7 @@ def list_videos(
     settings: Settings = Depends(settings_dep),
 ) -> VideoListResponse:
     threshold = overperform_ratio_threshold if overperform_ratio_threshold is not None else settings.overperform_ratio_default
+    ratio_column = Video.overperform_ratio_median if metric == "median" else Video.overperform_ratio
 
     query = db.query(Video).options(joinedload(Video.channel))
 
@@ -89,7 +100,7 @@ def list_videos(
             query = query.filter(Video.format == format)
 
     total = query.count()
-    overperform_count = query.filter(Video.overperform_ratio.is_not(None), Video.overperform_ratio >= threshold).count()
+    overperform_count = query.filter(ratio_column.is_not(None), ratio_column >= threshold).count()
 
     if sort_by not in SORT_COLUMNS:
         sort_by = "ratio"
@@ -103,7 +114,7 @@ def list_videos(
         )
         query = query.order_by(engagement.desc())
     else:  # ratio — NULLs (not enough history yet) sort last, not first
-        query = query.order_by(Video.overperform_ratio.is_(None), Video.overperform_ratio.desc())
+        query = query.order_by(ratio_column.is_(None), ratio_column.desc())
 
     rows = query.offset(offset).limit(limit).all()
 

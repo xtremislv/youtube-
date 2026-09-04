@@ -17,6 +17,7 @@ import {
   type CohortSummary,
   type SystemStatus,
   type ScraperSettings,
+  type OverperformMetric,
 } from "@/lib/api";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -332,10 +333,6 @@ function Sidebar({
   const navLinks = [
     { label: "Overperformance", icon: "chart", badge: overperformBadge },
     { label: "Competitor Roster", icon: "people", badge: null as number | null },
-    { label: "Trend & Velocity", icon: "trend", badge: null as number | null },
-    { label: "Format Matrix", icon: "grid", badge: null as number | null },
-    { label: "Comparison", icon: "compare", badge: null as number | null },
-    { label: "Alert Rules", icon: "bell", badge: null as number | null },
   ];
 
   return (
@@ -573,13 +570,45 @@ function NotificationPanel({ videos, loading, onClose }: { videos: Video[]; load
 
 // ─── Filter Bar ───────────────────────────────────────────────────────────────
 
+type DatePreset = "all" | "3d" | "7d" | "2w" | "1m" | "2m" | "custom";
+
+const DATE_PRESETS: { value: DatePreset; label: string; days: number | null }[] = [
+  { value: "all", label: "All time", days: null },
+  { value: "3d", label: "Last 3 days", days: 3 },
+  { value: "7d", label: "Last 7 days", days: 7 },
+  { value: "2w", label: "Last 2 weeks", days: 14 },
+  { value: "1m", label: "Last 1 month", days: 30 },
+  { value: "2m", label: "Last 2 months", days: 60 },
+  { value: "custom", label: "Custom range", days: null },
+];
+
+// "YYYY-MM-DD" in the viewer's local timezone — matches what <input type="date">
+// produces/consumes, so a preset and manual custom-range entry are interchangeable.
+function isoDate(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+function presetToRange(preset: DatePreset): { dateFrom: string; dateTo: string } {
+  const found = DATE_PRESETS.find(p => p.value === preset);
+  if (!found?.days) return { dateFrom: "", dateTo: "" };
+  const to = new Date();
+  const from = new Date();
+  from.setDate(from.getDate() - found.days);
+  return { dateFrom: isoDate(from), dateTo: isoDate(to) };
+}
+
 interface Filters {
   platform: Platform;
   channels: string[];
+  datePreset: DatePreset;
   dateFrom: string;
   dateTo: string;
   viewsThreshold: string;
   sortBy: string;
+  metric: OverperformMetric;
   showChart: boolean;
   format: string;
 }
@@ -674,13 +703,31 @@ function FilterBar({ filters, setFilters, viewMode, setViewMode, totalResults, c
         )}
       </div>
 
-      {/* Date range */}
+      {/* Date range — a preset dropdown; picking "Custom range" reveals the
+          two date pickers below it for a manual from/to. */}
       <div className="flex items-center gap-1 shrink-0">
-        <input type="date" value={filters.dateFrom} onChange={e => set("dateFrom")(e.target.value)}
-          className="select-custom text-xs" style={{ fontFamily: "JetBrains Mono, monospace" }} />
-        <span style={{ color: "var(--text-muted)" }} className="text-xs">→</span>
-        <input type="date" value={filters.dateTo} onChange={e => set("dateTo")(e.target.value)}
-          className="select-custom text-xs" style={{ fontFamily: "JetBrains Mono, monospace" }} />
+        <select
+          value={filters.datePreset}
+          onChange={e => {
+            const preset = e.target.value as DatePreset;
+            if (preset === "custom") {
+              setFilters({ ...filters, datePreset: preset });
+            } else {
+              setFilters({ ...filters, datePreset: preset, ...presetToRange(preset) });
+            }
+          }}
+          className="select-custom text-xs" style={{ fontFamily: "Inter, sans-serif" }}>
+          {DATE_PRESETS.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
+        </select>
+        {filters.datePreset === "custom" && (
+          <>
+            <input type="date" value={filters.dateFrom} onChange={e => set("dateFrom")(e.target.value)}
+              className="select-custom text-xs" style={{ fontFamily: "JetBrains Mono, monospace" }} />
+            <span style={{ color: "var(--text-muted)" }} className="text-xs">→</span>
+            <input type="date" value={filters.dateTo} onChange={e => set("dateTo")(e.target.value)}
+              className="select-custom text-xs" style={{ fontFamily: "JetBrains Mono, monospace" }} />
+          </>
+        )}
       </div>
 
       {/* Views threshold — the "optional benchmark": set it and the grid
@@ -699,6 +746,25 @@ function FilterBar({ filters, setFilters, viewMode, setViewMode, totalResults, c
         <option value="short">Shorts / Reels</option>
         <option value="reel">Reels only</option>
       </select>
+
+      {/* Baseline metric — which trailing stat (mean vs. median) the
+          overperform ratio badges/sort are computed against. Both are
+          always in the API response (see backend/app/overperformance.py),
+          so flipping this is instant, no re-fetch needed. */}
+      <div className="flex rounded-lg overflow-hidden shrink-0" style={{ border: "1px solid var(--border)" }} title="Which baseline the overperform ratio is calculated from">
+        {(["average", "median"] as OverperformMetric[]).map(m => (
+          <button key={m} onClick={() => setFilters({ ...filters, metric: m })}
+            className="px-3 py-1.5 text-xs transition-all"
+            style={{
+              background: filters.metric === m ? "var(--accent)" : "var(--bg-elevated)",
+              color: filters.metric === m ? "#0d0096" : "var(--text-muted)",
+              fontFamily: "Inter, sans-serif",
+              fontWeight: 500,
+            }}>
+            {m === "average" ? "Avg" : "Median"}
+          </button>
+        ))}
+      </div>
 
       {/* Sort */}
       <select value={filters.sortBy} onChange={e => set("sortBy")(e.target.value)}
@@ -741,9 +807,15 @@ function FilterBar({ filters, setFilters, viewMode, setViewMode, totalResults, c
 
 // ─── Video Card ───────────────────────────────────────────────────────────────
 
-function VideoCard({ video, mode }: { video: Video; mode: ViewMode }) {
-  const ratio = video.overperformRatio;
-  const overColor = ratio == null ? "var(--text-muted)" : ratio >= 3 ? "#4ade80" : ratio >= 2 ? "#facc15" : "#fb923c";
+function VideoCard({ video, mode, metric = "average" }: { video: Video; mode: ViewMode; metric?: OverperformMetric }) {
+  const ratio = metric === "median" ? video.overperformRatioMedian : video.overperformRatio;
+  const overColor =
+    ratio == null ? "var(--text-muted)"
+    : ratio < 1 ? "#f87171"   // underperforming vs. baseline — always red, regardless of tier below
+    : ratio >= 3 ? "#4ade80"
+    : ratio >= 2 ? "#facc15"
+    : "#fb923c";
+  const baselineLabel = metric === "median" ? "vs median" : "vs avg";
   const thumb = video.thumbnail;
   const Wrapper = video.url ? "a" : "div";
   const wrapperProps = video.url ? { href: video.url, target: "_blank", rel: "noreferrer" } : {};
@@ -787,7 +859,7 @@ function VideoCard({ video, mode }: { video: Video; mode: ViewMode }) {
             <div className="text-sm font-bold font-mono flex items-center gap-1" style={{ color: overColor }}>
               <TrendUpIcon />{fmtRatio(ratio)}
             </div>
-            <div className="text-[10px]" style={{ color: "var(--text-muted)" }}>vs avg</div>
+            <div className="text-[10px]" style={{ color: "var(--text-muted)" }}>{baselineLabel}</div>
           </div>
           <Sparkline ratio={ratio ?? 1} color={overColor} />
           {ratio != null && ratio >= 2 && <span className="badge-overperform text-[10px] px-2 py-0.5 rounded-full font-mono font-bold">OVP</span>}
@@ -815,7 +887,14 @@ function VideoCard({ video, mode }: { video: Video; mode: ViewMode }) {
           </span>
         </div>
         <div className="absolute top-2 right-2">
-          <span className="badge-overperform text-[10px] px-1.5 py-0.5 rounded-sm font-mono font-bold flex items-center gap-1">
+          {/* Opaque (not translucent) background — a low-opacity fill here
+              used to wash out against bright thumbnails and become
+              unreadable. Text color follows overColor: red below 1x
+              (underperforming), tiered green/yellow/orange at and above it. */}
+          <span
+            className="text-[10px] px-1.5 py-0.5 rounded-sm font-mono font-bold flex items-center gap-1"
+            style={{ background: "rgba(10,12,18,0.92)", color: overColor, border: `1px solid ${ratio == null ? "var(--border)" : overColor}` }}
+          >
             <TrendUpIcon />{ratio == null ? "New" : `${ratio.toFixed(1)}x`}
           </span>
         </div>
@@ -1068,31 +1147,6 @@ function ChannelStatCard({ channel: c }: { channel: Channel }) {
   );
 }
 
-// ─── Coming Soon (placeholder sections) ────────────────────────────────────────
-// The Figma design ships six nav sections but only "Overperformance" had a
-// real view behind it. Rather than leave the other four (Trend & Velocity,
-// Format Matrix, Comparison, Alert Rules — Competitor Roster now has a real
-// view above) silently doing nothing when clicked, they get an honest empty
-// state saying so. See PRODUCTION_ROADMAP.md "Phase 2" for what each would
-// need — the underlying /api/videos data already has everything (format,
-// engagement, per-channel history) they'd be built from.
-
-function ComingSoon({ section }: { section: string }) {
-  const copy: Record<string, string> = {
-    "Trend & Velocity": "Will chart how fast each channel's views/engagement are accelerating over time.",
-    "Format Matrix": "Will break down overperformance by format (long-form vs. Shorts vs. Reels) per channel.",
-    "Comparison": "Will let you pick two channels or cohorts and compare their metrics side by side.",
-    "Alert Rules": "Will let you configure custom overperformance thresholds per channel/cohort with notifications.",
-  };
-  return (
-    <div className="flex flex-col items-center justify-center h-64" style={{ color: "var(--text-muted)" }}>
-      <div className="text-4xl mb-3">🚧</div>
-      <div className="text-sm" style={{ fontFamily: "Lora, serif" }}>{section} — coming soon</div>
-      <div className="text-xs mt-1 max-w-sm text-center">{copy[section] ?? "This section isn't built yet."}</div>
-    </div>
-  );
-}
-
 // ─── Main App ─────────────────────────────────────────────────────────────────
 
 const EMPTY_VIDEOS: Video[] = [];
@@ -1107,10 +1161,12 @@ export default function App() {
   const [filters, setFilters] = useState<Filters>({
     platform: "all",
     channels: [],
+    datePreset: "all",
     dateFrom: "",
     dateTo: "",
     viewsThreshold: "",
     sortBy: "ratio",
+    metric: "average",
     showChart: false,
     format: "all",
   });
@@ -1211,6 +1267,7 @@ export default function App() {
         viewsThreshold: filters.viewsThreshold,
         format: filters.format,
         sortBy: filters.sortBy,
+        metric: filters.metric,
       })
         .then(result => {
           setVideos(result.videos);
@@ -1376,10 +1433,6 @@ export default function App() {
           <div className="flex-1 overflow-y-auto">
             <CompetitorRoster channels={channels} onChanged={refreshChannelsAndCohorts} />
           </div>
-        ) : activeSection !== "Overperformance" ? (
-          <div className="flex-1 overflow-y-auto">
-            <ComingSoon section={activeSection} />
-          </div>
         ) : (
           <>
             {/* Filter Bar */}
@@ -1417,11 +1470,11 @@ export default function App() {
                 </div>
               ) : viewMode === "grid" ? (
                 <div className="p-5 grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))" }}>
-                  {videos.map(v => <VideoCard key={v.id} video={v} mode="grid" />)}
+                  {videos.map(v => <VideoCard key={v.id} video={v} mode="grid" metric={filters.metric} />)}
                 </div>
               ) : (
                 <div className="p-5 flex flex-col gap-2">
-                  {videos.map(v => <VideoCard key={v.id} video={v} mode="list" />)}
+                  {videos.map(v => <VideoCard key={v.id} video={v} mode="list" metric={filters.metric} />)}
                 </div>
               )}
             </div>

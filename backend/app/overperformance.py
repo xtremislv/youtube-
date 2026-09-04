@@ -24,6 +24,14 @@ count) is ``overperform_ratio >= OVERPERFORM_RATIO_DEFAULT`` (2.0x by
 default, configurable via env var) — that's exactly the "crossed a
 benchmark" behaviour requested for the dashboard.
 
+Alongside the mean, the same trailing window also gets a **median**
+baseline (``median_views_baseline`` / ``overperform_ratio_median``) —
+useful because one viral outlier in a channel's recent history drags the
+mean up (and so understates how much a new video overperformed), while the
+median shrugs it off. The frontend lets viewers toggle which one drives the
+ratio shown/sorted-by; both are always computed and stored so that toggle
+is instant rather than needing a re-fetch with different math.
+
 This module never talks to the database directly (easier to unit-test) — it
 takes plain video rows in, returns updated ones out; the caller
 (scrapers/*.py) is responsible for persisting the result.
@@ -31,6 +39,7 @@ takes plain video rows in, returns updated ones out; the caller
 
 from __future__ import annotations
 
+import statistics
 from dataclasses import dataclass
 from datetime import date
 from typing import TYPE_CHECKING
@@ -54,6 +63,8 @@ class BaselineResult:
     id: str
     avg_views_baseline: float | None
     overperform_ratio: float | None
+    median_views_baseline: float | None
+    overperform_ratio_median: float | None
 
 
 def compute_baselines(
@@ -82,9 +93,27 @@ def compute_baselines(
                 trailing = window_views[-window:]
                 baseline = sum(trailing) / len(trailing)
                 ratio = (v.views / baseline) if baseline > 0 else None
-                results.append(BaselineResult(id=v.id, avg_views_baseline=baseline, overperform_ratio=ratio))
+                median_baseline = statistics.median(trailing)
+                ratio_median = (v.views / median_baseline) if median_baseline > 0 else None
+                results.append(
+                    BaselineResult(
+                        id=v.id,
+                        avg_views_baseline=baseline,
+                        overperform_ratio=ratio,
+                        median_views_baseline=median_baseline,
+                        overperform_ratio_median=ratio_median,
+                    )
+                )
             else:
-                results.append(BaselineResult(id=v.id, avg_views_baseline=None, overperform_ratio=None))
+                results.append(
+                    BaselineResult(
+                        id=v.id,
+                        avg_views_baseline=None,
+                        overperform_ratio=None,
+                        median_views_baseline=None,
+                        overperform_ratio_median=None,
+                    )
+                )
             window_views.append(v.views)
 
     return results
@@ -117,3 +146,5 @@ def recompute_and_store_channel_baselines(db: "Session", channel_id: str, settin
         r = results.get(v.id)
         v.avg_views_baseline = r.avg_views_baseline if r else None
         v.overperform_ratio = r.overperform_ratio if r else None
+        v.median_views_baseline = r.median_views_baseline if r else None
+        v.overperform_ratio_median = r.overperform_ratio_median if r else None
