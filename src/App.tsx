@@ -312,7 +312,6 @@ interface SidebarProps {
   overperformBadge: number | null;
   cohorts: CohortSummary[];
   quotaPct: number | null;
-  workspaceName: string;
   instagramScrapingEnabled: boolean | null;
   onToggleInstagramScraping: () => void;
   togglingScraper: boolean;
@@ -325,14 +324,13 @@ function Sidebar({
   overperformBadge,
   cohorts,
   quotaPct,
-  workspaceName,
   instagramScrapingEnabled,
   onToggleInstagramScraping,
   togglingScraper,
 }: SidebarProps) {
   const navLinks = [
     { label: "Overperformance", icon: "chart", badge: overperformBadge },
-    { label: "Competitor Roster", icon: "people", badge: null as number | null },
+    { label: "Add Channel", icon: "people", badge: null as number | null },
   ];
 
   return (
@@ -360,19 +358,7 @@ function Sidebar({
             <div className="text-sm font-bold leading-none" style={{ color: "var(--text-primary)", fontFamily: "Lora, serif" }}>
               TW<span style={{ color: "#c0c1ff" }}>-DASH</span>
             </div>
-            <div className="text-[10px] tracking-widest uppercase mt-0.5" style={{ color: "var(--text-muted)", fontFamily: "Lora, serif" }}>Outperform Studio</div>
           </div>
-        </div>
-      </div>
-
-      {/* Workspace */}
-      <div className="px-3 py-2 shrink-0">
-        <div className="flex items-center justify-between rounded-lg px-3 py-2.5" style={{ background: "var(--bg-elevated)" }}>
-          <div>
-            <div className="text-[10px] tracking-widest uppercase mb-0.5" style={{ color: "var(--text-muted)", fontFamily: "Lora, serif" }}>Workspace</div>
-            <div className="text-xs font-semibold truncate max-w-[140px]" style={{ color: "var(--text-primary)", fontFamily: "Lora, serif" }}>{workspaceName}</div>
-          </div>
-          <svg width="6" height="12" viewBox="0 0 6 12" fill="none"><path d={svgPaths.p92c2900} fill="#c7c4d7" /></svg>
         </div>
       </div>
 
@@ -415,7 +401,7 @@ function Sidebar({
         </div>
         {cohorts.length === 0 ? (
           <div className="px-3 py-2 text-xs" style={{ color: "var(--text-muted)" }}>
-            Tag channels with a cohort in Competitor Roster to group them here.
+            Tag channels with a cohort in Add Channel to group them here.
           </div>
         ) : (
           cohorts.map((c, i) => (
@@ -685,7 +671,7 @@ function FilterBar({ filters, setFilters, viewMode, setViewMode, totalResults, c
             </div>
             {platformChannels.length === 0 ? (
               <div className="px-3 py-3 text-xs" style={{ color: "var(--text-muted)" }}>
-                No channels tracked yet — add some in Competitor Roster.
+                No channels tracked yet — add some in Add Channel.
               </div>
             ) : (
               platformChannels.map(c => (
@@ -921,8 +907,8 @@ function VideoCard({ video, mode, metric = "average" }: { video: Video; mode: Vi
             <div className="text-sm font-bold font-mono" style={{ color: "var(--text-primary)" }}>{fmtViews(video.views)}</div>
           </div>
           <div className="flex-1">
-            <div className="text-[10px] mb-0.5" style={{ color: "var(--text-muted)" }}>Avg</div>
-            <div className="text-sm font-mono" style={{ color: "var(--text-muted)" }}>{fmtViewsN(video.avgViews)}</div>
+            <div className="text-[10px] mb-0.5" style={{ color: "var(--text-muted)" }}>{metric === "median" ? "Median" : "Avg"}</div>
+            <div className="text-sm font-mono" style={{ color: "var(--text-muted)" }}>{fmtViewsN(metric === "median" ? video.medianViews : video.avgViews)}</div>
           </div>
           <div>
             <Sparkline ratio={ratio ?? 1} color={overColor} />
@@ -1328,7 +1314,6 @@ export default function App() {
         overperformBadge={systemStatus?.overperformCount ?? null}
         cohorts={cohorts}
         quotaPct={systemStatus?.youtubeQuotaPct ?? null}
-        workspaceName={systemStatus?.workspaceName ?? "Competitor Dashboard"}
         instagramScrapingEnabled={scraperSettings?.instagramScrapingEnabled ?? null}
         onToggleInstagramScraping={handleToggleInstagramScraping}
         togglingScraper={togglingScraper}
@@ -1429,7 +1414,7 @@ export default function App() {
           </div>
         </div>
 
-        {activeSection === "Competitor Roster" ? (
+        {activeSection === "Add Channel" ? (
           <div className="flex-1 overflow-y-auto">
             <CompetitorRoster channels={channels} onChanged={refreshChannelsAndCohorts} />
           </div>
@@ -1464,7 +1449,7 @@ export default function App() {
                   <div className="text-sm" style={{ fontFamily: "Lora, serif" }}>No videos match your filters</div>
                   <div className="text-xs mt-1">
                     {channels.length === 0
-                      ? "Add a channel in Competitor Roster to get started."
+                      ? "Add a channel in Add Channel to get started."
                       : "Try adjusting the date range or views threshold."}
                   </div>
                 </div>
