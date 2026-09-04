@@ -14,6 +14,7 @@ sit blank. The next scrape run (scheduled, or a manual POST
 
 from __future__ import annotations
 
+import datetime as dt
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -25,14 +26,19 @@ from app.config import Settings
 from app.database import get_db
 from app.deps import settings_dep
 from app.formatting import format_count
-from app.models import Channel
+from app.models import Channel, Video
 from app.schemas import ChannelCreate, ChannelOut, ChannelUpdate, CohortOut
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/channels", tags=["channels"])
 
 
-def _to_out(channel: Channel) -> ChannelOut:
+def _to_out(
+    channel: Channel,
+    avg_views: float | None = None,
+    video_count: int = 0,
+    last_published_at: dt.date | None = None,
+) -> ChannelOut:
     return ChannelOut(
         id=channel.id,
         name=channel.name,
@@ -44,6 +50,9 @@ def _to_out(channel: Channel) -> ChannelOut:
         handle=channel.handle,
         cohort=channel.cohort,
         is_active=channel.is_active,
+        avg_views=round(avg_views) if avg_views is not None else None,
+        video_count=video_count or 0,
+        last_published_at=last_published_at.isoformat() if last_published_at else None,
     )
 
 
@@ -53,13 +62,33 @@ def list_channels(
     include_inactive: bool = False,
     db: Session = Depends(get_db),
 ) -> list[ChannelOut]:
-    query = db.query(Channel)
+    # One grouped query for every channel's video stats (avg views, video
+    # count, most recent publish date), outer-joined onto the channel list —
+    # avoids an N+1 query per channel. Backs the roster's channel card;
+    # channels with no scraped videos yet just get None/0 from the outer join.
+    stats_subq = (
+        db.query(
+            Video.channel_id.label("channel_id"),
+            func.avg(Video.views).label("avg_views"),
+            func.count(Video.id).label("video_count"),
+            func.max(Video.published_at).label("last_published_at"),
+        )
+        .group_by(Video.channel_id)
+        .subquery()
+    )
+
+    query = db.query(Channel, stats_subq.c.avg_views, stats_subq.c.video_count, stats_subq.c.last_published_at).outerjoin(
+        stats_subq, stats_subq.c.channel_id == Channel.id
+    )
     if platform and platform != "all":
         query = query.filter(Channel.platform == platform)
     if not include_inactive:
         query = query.filter(Channel.is_active.is_(True))
-    channels = query.order_by(Channel.name).all()
-    return [_to_out(c) for c in channels]
+    rows = query.order_by(Channel.name).all()
+    return [
+        _to_out(channel, avg_views=avg_views, video_count=video_count, last_published_at=last_published_at)
+        for channel, avg_views, video_count, last_published_at in rows
+    ]
 
 
 @router.get("/cohorts", response_model=list[CohortOut])

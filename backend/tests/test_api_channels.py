@@ -6,6 +6,10 @@ resolution" path. That path is exactly what a fresh clone with no API keys
 configured yet will hit, so it's worth covering on its own.
 """
 
+import datetime as dt
+
+from app.models import Video
+
 
 def test_create_and_list_youtube_channel(client):
     resp = client.post("/api/channels", json={"platform": "youtube", "handle": "@mkbhd", "cohort": "Tech Giants"})
@@ -16,10 +20,41 @@ def test_create_and_list_youtube_channel(client):
     assert body["handle"] == "mkbhd"
     assert body["cohort"] == "Tech Giants"
     assert body["subs"] == "—"  # no live resolution without an API key
+    # a brand-new channel has no scraped videos yet
+    assert body["avgViews"] is None
+    assert body["videoCount"] == 0
+    assert body["lastPublishedAt"] is None
 
     listed = client.get("/api/channels").json()
     assert len(listed) == 1
     assert listed[0]["id"] == "youtube:@mkbhd"
+
+
+def test_channel_card_stats_computed_from_videos(client, db_session):
+    """avgViews/videoCount/lastPublishedAt on GET /api/channels are derived
+    from that channel's videos (app/routers/channels.py's grouped subquery),
+    not stored on the Channel row — this is what the dashboard's channel
+    card renders."""
+    created = client.post("/api/channels", json={"platform": "youtube", "handle": "@mkbhd"}).json()
+    channel_id = created["id"]
+    db_session.add_all(
+        [
+            Video(
+                id="v1", channel_id=channel_id, platform="youtube", title="Video 1",
+                views=1000, published_at=dt.date(2026, 8, 1), duration_seconds=60, format="long",
+            ),
+            Video(
+                id="v2", channel_id=channel_id, platform="youtube", title="Video 2",
+                views=3000, published_at=dt.date(2026, 8, 20), duration_seconds=60, format="long",
+            ),
+        ]
+    )
+    db_session.commit()
+
+    body = client.get("/api/channels").json()[0]
+    assert body["avgViews"] == 2000
+    assert body["videoCount"] == 2
+    assert body["lastPublishedAt"] == "2026-08-20"
 
 
 def test_create_instagram_channel_normalizes_handle(client):

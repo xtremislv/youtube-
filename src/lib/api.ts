@@ -32,6 +32,12 @@ export interface ApiChannel {
   handle: string;
   cohort: string | null;
   isActive: boolean;
+  // Derived from this channel's videos server-side (see ChannelOut in
+  // backend/app/schemas.py) — null/0 until the channel has been scraped
+  // at least once. Backs the Competitor Roster's channel card.
+  avgViews: number | null;
+  videoCount: number;
+  lastPublishedAt: string | null; // "YYYY-MM-DD"
 }
 
 export interface ApiVideo {

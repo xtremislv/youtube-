@@ -179,6 +179,33 @@ function RefreshIcon({ size = 14 }: { size?: number }) {
   );
 }
 
+function HeartIcon({ size = 11 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.6l-1-1a5.5 5.5 0 0 0-7.8 7.8l1 1L12 21l7.8-7.6 1-1a5.5 5.5 0 0 0 0-7.8z" />
+    </svg>
+  );
+}
+
+function CommentIcon({ size = 11 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+    </svg>
+  );
+}
+
+function FilmIcon({ size = 12 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="2" y="3" width="20" height="18" rx="2" />
+      <line x1="7" y1="3" x2="7" y2="21" /><line x1="17" y1="3" x2="17" y2="21" />
+      <line x1="2" y1="9" x2="7" y2="9" /><line x1="2" y1="15" x2="7" y2="15" />
+      <line x1="17" y1="9" x2="22" y2="9" /><line x1="17" y1="15" x2="22" y2="15" />
+    </svg>
+  );
+}
+
 // ─── Mini Sparkline ───────────────────────────────────────────────────────────
 
 function Sparkline({ ratio, color }: { ratio: number; color: string }) {
@@ -675,6 +702,12 @@ function VideoCard({ video, mode }: { video: Video; mode: ViewMode }) {
             <span className="text-xs" style={{ color: "var(--text-muted)", fontFamily: "Lora, serif" }}>{video.channelName}</span>
             <span className="text-xs" style={{ color: "var(--text-muted)" }}>·</span>
             <span className="text-xs font-mono" style={{ color: "var(--text-muted)" }}>{fmtDate(video.publishedAt)}</span>
+            <span className="flex items-center gap-1 text-xs font-mono" style={{ color: "var(--text-muted)" }} title="Likes">
+              <HeartIcon />{fmtViewsN(video.likes)}
+            </span>
+            <span className="flex items-center gap-1 text-xs font-mono" style={{ color: "var(--text-muted)" }} title="Comments">
+              <CommentIcon />{fmtViewsN(video.comments)}
+            </span>
           </div>
         </div>
 
@@ -726,6 +759,14 @@ function VideoCard({ video, mode }: { video: Video; mode: ViewMode }) {
         <div className="flex items-center justify-between">
           <span className="text-xs truncate" style={{ color: "var(--text-muted)", fontFamily: "Lora, serif" }}>{video.channelName}</span>
           <span className="text-[11px] font-mono shrink-0 ml-1" style={{ color: "var(--text-muted)" }}>{fmtDate(video.publishedAt)}</span>
+        </div>
+        <div className="flex items-center gap-3">
+          <span className="flex items-center gap-1 text-[11px] font-mono" style={{ color: "var(--text-muted)" }} title="Likes">
+            <HeartIcon />{fmtViewsN(video.likes)}
+          </span>
+          <span className="flex items-center gap-1 text-[11px] font-mono" style={{ color: "var(--text-muted)" }} title="Comments">
+            <CommentIcon />{fmtViewsN(video.comments)}
+          </span>
         </div>
 
         <div className="flex items-center gap-3 mt-auto pt-2" style={{ borderTop: "1px solid var(--border)" }}>
@@ -847,28 +888,70 @@ function CompetitorRoster({ channels, onChanged }: { channels: Channel[]; onChan
       ) : (
         <div className="flex flex-col gap-2">
           {channels.map(c => (
-            <div key={c.id} className="video-card flex items-center gap-3 p-3">
-              <div className="flex items-center justify-center rounded-full size-9 shrink-0 text-xs font-bold" style={{ background: "var(--bg-elevated)", color: "var(--accent-light)" }}>
-                {c.avatarUrl ? <img src={c.avatarUrl} alt={c.name} className="size-9 rounded-full object-cover" /> : c.avatar}
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="text-sm font-semibold truncate" style={{ color: "var(--text-primary)", fontFamily: "Lora, serif" }}>{c.name}</div>
-                <div className="flex items-center gap-2 mt-0.5">
-                  <span className={`text-[10px] px-1.5 rounded ${c.platform === "youtube" ? "badge-yt" : "badge-ig"}`}>{c.platform === "youtube" ? "YT" : "IG"}</span>
-                  <span className="text-xs font-mono" style={{ color: "var(--text-muted)" }}>{c.subs} subscribers</span>
-                  {c.cohort && <span className="filter-chip">{c.cohort}</span>}
-                </div>
-              </div>
-              <button onClick={() => handleToggleActive(c)} className="text-xs px-2 py-1 rounded-lg" style={{ color: "var(--text-muted)", border: "1px solid var(--border)" }}>
-                {c.isActive ? "Pause" : "Resume"}
-              </button>
-              <button onClick={() => handleRemove(c.id)} className="flex items-center justify-center rounded-lg size-8 hover:bg-white/5" style={{ color: "var(--text-muted)" }}>
-                <TrashIcon />
-              </button>
-            </div>
+            <ChannelCard key={c.id} channel={c} onToggleActive={() => handleToggleActive(c)} onRemove={() => handleRemove(c.id)} />
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+// ─── Channel Card ─────────────────────────────────────────────────────────────
+// Each tracked competitor's row in the roster, expanded from a plain name+subs
+// line into a real card: identity/actions on top, then the channel-level
+// stats (avg views, videos tracked, last published) that back it — those
+// three are computed server-side from the channel's videos, see ChannelOut in
+// backend/app/schemas.py. A channel that hasn't been scraped yet just shows
+// "—" for them rather than 0, since 0 avg views would misleadingly read as
+// "this channel underperforms" instead of "no data yet".
+
+function ChannelCard({ channel: c, onToggleActive, onRemove }: { channel: Channel; onToggleActive: () => void; onRemove: () => void }) {
+  return (
+    <div className="video-card flex flex-col gap-3 p-3">
+      <div className="flex items-center gap-3">
+        <div className="flex items-center justify-center rounded-full size-9 shrink-0 text-xs font-bold" style={{ background: "var(--bg-elevated)", color: "var(--accent-light)" }}>
+          {c.avatarUrl ? <img src={c.avatarUrl} alt={c.name} className="size-9 rounded-full object-cover" /> : c.avatar}
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="text-sm font-semibold truncate" style={{ color: "var(--text-primary)", fontFamily: "Lora, serif" }}>{c.name}</div>
+          <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+            <span className={`text-[10px] px-1.5 rounded ${c.platform === "youtube" ? "badge-yt" : "badge-ig"}`}>{c.platform === "youtube" ? "YT" : "IG"}</span>
+            <span className="text-xs font-mono" style={{ color: "var(--text-muted)" }}>@{c.handle}</span>
+            {c.cohort && <span className="filter-chip">{c.cohort}</span>}
+            {!c.isActive && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ color: "var(--text-muted)", border: "1px solid var(--border)" }}>Paused</span>
+            )}
+          </div>
+        </div>
+        <button onClick={onToggleActive} className="text-xs px-2 py-1 rounded-lg shrink-0" style={{ color: "var(--text-muted)", border: "1px solid var(--border)" }}>
+          {c.isActive ? "Pause" : "Resume"}
+        </button>
+        <button onClick={onRemove} className="flex items-center justify-center rounded-lg size-8 shrink-0 hover:bg-white/5" style={{ color: "var(--text-muted)" }}>
+          <TrashIcon />
+        </button>
+      </div>
+
+      <div className="flex items-center gap-5 flex-wrap pt-2" style={{ borderTop: "1px solid var(--border)" }}>
+        <div>
+          <div className="text-[10px] mb-0.5" style={{ color: "var(--text-muted)" }}>Subscribers</div>
+          <div className="text-sm font-bold font-mono" style={{ color: "var(--text-primary)" }}>{c.subs}</div>
+        </div>
+        <div>
+          <div className="text-[10px] mb-0.5" style={{ color: "var(--text-muted)" }}>Avg views</div>
+          <div className="text-sm font-bold font-mono" style={{ color: "var(--text-primary)" }}>{fmtViewsN(c.avgViews)}</div>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <span style={{ color: "var(--text-muted)" }}><FilmIcon /></span>
+          <div>
+            <div className="text-[10px] mb-0.5" style={{ color: "var(--text-muted)" }}>Tracked</div>
+            <div className="text-sm font-mono" style={{ color: "var(--text-muted)" }}>{c.videoCount} video{c.videoCount === 1 ? "" : "s"}</div>
+          </div>
+        </div>
+        <div>
+          <div className="text-[10px] mb-0.5" style={{ color: "var(--text-muted)" }}>Last published</div>
+          <div className="text-sm font-mono" style={{ color: "var(--text-muted)" }}>{c.lastPublishedAt ? fmtDate(c.lastPublishedAt) : "—"}</div>
+        </div>
+      </div>
     </div>
   );
 }

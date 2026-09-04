@@ -38,6 +38,13 @@ class ChannelOut(CamelModel):
     handle: str
     cohort: str | None = None
     is_active: bool
+    # Derived from this channel's videos (see app/routers/channels.py's
+    # list_channels — computed with one grouped SQL query, not stored on the
+    # Channel row). All three are None/0 for a brand-new channel that hasn't
+    # been scraped yet. Backs the Competitor Roster's channel card.
+    avg_views: int | None = None
+    video_count: int = 0
+    last_published_at: str | None = None  # "YYYY-MM-DD", most recent video
 
 
 class ChannelCreate(BaseModel):
