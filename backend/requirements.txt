@@ -12,7 +12,7 @@ pydantic-settings==2.15.0
 python-dotenv==1.2.3
 APScheduler==3.11.3
 google-api-python-client==2.200.0
-apify-client==3.2.0
+apify-client==2.5.1
 httpx==0.28.1
 
 # dev / test only (also installed in CI, not required in production image if you trim it)

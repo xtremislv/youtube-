@@ -13,6 +13,18 @@
 #   - You still need to set YOUTUBE_API_KEY, APIFY_API_TOKEN, and
 #     SCRAPE_TRIGGER_API_KEY as secrets in the Render dashboard — this file
 #     intentionally does not contain real secrets.
+#   - If you're serving the frontend from Vercel instead (PRODUCTION_ROADMAP
+#     "Path A" — Vercel + Render), the competitor-dashboard-frontend service
+#     below is unused; either ignore it or delete it from Render's dashboard,
+#     your call. vercel.json is the config that actually matters for that path.
+#   - IMPORTANT: any envVar here with a literal `value:` (not `sync: false`)
+#     gets re-applied to the live service on every push to this repo's
+#     connected branch, by default — Render Blueprints auto-sync on every
+#     push unless you turn that off in the Blueprint's own Settings page.
+#     That will silently overwrite a value you changed by hand in the Render
+#     dashboard back to whatever's written here. CORS_ORIGINS below is
+#     `sync: false` for exactly this reason — don't change it back to a
+#     literal `value:` unless you actually want it pinned to a fixed origin.
 
 services:
   - type: web
@@ -36,7 +48,7 @@ services:
       - key: ENABLE_INTERNAL_SCHEDULER
         value: "false" # free plan sleeps when idle; use the GitHub Actions cron instead
       - key: CORS_ORIGINS
-        value: https://competitor-dashboard.onrender.com # update to your actual frontend URL
+        sync: false # set this to your actual deployed frontend URL(s) in the Render dashboard — see the top-of-file note on why this is sync:false and not a literal value
 
   - type: web
     name: competitor-dashboard-frontend

@@ -87,6 +87,25 @@ export interface CohortSummary {
   count: number;
 }
 
+export interface ScrapeRun {
+  id: number;
+  platform: string;
+  channelId: string | null;
+  startedAt: string;
+  finishedAt: string | null;
+  status: string;
+  channelsProcessed: number;
+  videosUpserted: number;
+  youtubeQuotaUnitsUsed: number;
+  apifyRunsStarted: number;
+  errorMessage: string | null;
+}
+
+export interface ScrapeTriggerResult {
+  message: string;
+  runs: ScrapeRun[];
+}
+
 class ApiError extends Error {
   constructor(
     message: string,
@@ -163,6 +182,22 @@ export function fetchVideos(query: VideoQuery): Promise<VideoListResult> {
 
 export function fetchSystemStatus(): Promise<SystemStatus> {
   return request<SystemStatus>("/api/system/status");
+}
+
+/**
+ * Kicks off a scrape right now, for the dashboard's "Refresh data" button.
+ * Hits POST /api/scrape/run-manual — unlike POST /api/scrape/run (which the
+ * GitHub Actions cron/curl use), this one needs no API key, since a key
+ * shipped in this bundle would be readable by anyone who opens dev tools on
+ * the deployed site. It's cooldown-limited server-side instead: expect a
+ * 429 ApiError (see MANUAL_SCRAPE_COOLDOWN_SECONDS in backend/.env.example)
+ * if one already ran recently — callers should show `err.message` (it's
+ * already a human-readable "try again in Ns" string) rather than treating
+ * it like an unexpected failure.
+ */
+export function triggerManualScrape(platform?: Exclude<Platform, "all">): Promise<ScrapeTriggerResult> {
+  const params = platform ? `?platform=${platform}` : "";
+  return request<ScrapeTriggerResult>(`/api/scrape/run-manual${params}`, { method: "POST" });
 }
 
 export { ApiError };

@@ -51,6 +51,10 @@ class Settings(BaseSettings):
     daily_scrape_hour: int = 6
     daily_scrape_minute: int = 0
 
+    # Cooldown (seconds) for the dashboard's unauthenticated "Refresh now"
+    # button — see routers/scrape.py's POST /run-manual docstring.
+    manual_scrape_cooldown_seconds: int = 300
+
     # YouTube's own daily quota ceiling (used only to render the "API Quota"
     # widget as a percentage — does not enforce anything).
     youtube_daily_quota_budget: int = 10_000

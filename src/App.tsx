@@ -8,6 +8,7 @@ import {
   createChannel,
   deleteChannel,
   updateChannel,
+  triggerManualScrape,
   ApiError,
   type ApiChannel as Channel,
   type ApiVideo as Video,
@@ -47,6 +48,19 @@ function fmtDate(d: string) {
 
 function currentMonthLabel() {
   return new Date().toLocaleDateString("en-US", { month: "short", year: "numeric" });
+}
+
+/** "3m ago" / "2h ago" — used to show when data was last refreshed. */
+function fmtRelativeTime(iso: string | null | undefined): string | null {
+  if (!iso) return null;
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return null;
+  const mins = Math.round((Date.now() - then) / 60_000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.round(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.round(hours / 24)}d ago`;
 }
 
 // ─── Icons ────────────────────────────────────────────────────────────────────
@@ -152,6 +166,15 @@ function PlusIcon({ size = 12 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
       <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
+    </svg>
+  );
+}
+
+function RefreshIcon({ size = 14 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M21 12a9 9 0 1 1-2.64-6.36" />
+      <path d="M21 3v6h-6" />
     </svg>
   );
 }
@@ -908,11 +931,45 @@ export default function App() {
   const [notifVideos, setNotifVideos] = useState<Video[]>(EMPTY_VIDEOS);
   const [notifLoading, setNotifLoading] = useState(false);
 
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshMessage, setRefreshMessage] = useState<{ text: string; kind: "success" | "error" } | null>(null);
+  const [videosRefetchTick, setVideosRefetchTick] = useState(0);
+
   const refreshChannelsAndCohorts = useCallback(() => {
     fetchChannels().then(setChannels).catch(() => {});
     fetchCohorts().then(setCohorts).catch(() => {});
     fetchSystemStatus().then(setSystemStatus).catch(() => {});
   }, []);
+
+  // "Refresh data" button in the top bar — see src/lib/api.ts's
+  // triggerManualScrape docstring for why this hits a different,
+  // cooldown-limited endpoint instead of the API-key-protected one the
+  // GitHub Actions schedule uses.
+  const handleManualRefresh = useCallback(async () => {
+    if (refreshing) return;
+    setRefreshing(true);
+    setRefreshMessage(null);
+    try {
+      const result = await triggerManualScrape();
+      const totalVideos = result.runs.reduce((sum, r) => sum + r.videosUpserted, 0);
+      const failed = result.runs.filter(r => r.status === "failed");
+      setRefreshMessage(
+        failed.length > 0
+          ? { text: failed[0].errorMessage ?? "Refresh finished with errors.", kind: "error" }
+          : { text: `Refreshed — ${totalVideos} video${totalVideos === 1 ? "" : "s"} updated.`, kind: "success" },
+      );
+      refreshChannelsAndCohorts();
+      setVideosRefetchTick(t => t + 1);
+    } catch (err) {
+      setRefreshMessage({
+        text: err instanceof ApiError ? err.message : "Could not start a refresh.",
+        kind: "error",
+      });
+    } finally {
+      setRefreshing(false);
+      window.setTimeout(() => setRefreshMessage(null), 6000);
+    }
+  }, [refreshing, refreshChannelsAndCohorts]);
 
   // Initial load.
   useEffect(() => {
@@ -946,7 +1003,7 @@ export default function App() {
         });
     }, 300);
     return () => window.clearTimeout(handle);
-  }, [filters]);
+  }, [filters, videosRefetchTick]);
 
   useEffect(() => {
     function handler(e: MouseEvent) {
@@ -1025,6 +1082,43 @@ export default function App() {
                 <span className="filter-chip active">
                   ≥{fmtViews(Number(filters.viewsThreshold))}
                   <button onClick={() => setFilters({ ...filters, viewsThreshold: "" })}><XIcon /></button>
+                </span>
+              )}
+            </div>
+
+            {/* Refresh data */}
+            <div className="relative flex items-center gap-2">
+              {refreshMessage && (
+                <span
+                  className="text-[11px] px-2 py-1 rounded-md whitespace-nowrap"
+                  style={{
+                    color: refreshMessage.kind === "success" ? "var(--accent-light)" : "#f87171",
+                    background: "var(--bg-base)",
+                    border: `1px solid ${refreshMessage.kind === "success" ? "var(--accent)" : "#f87171"}`,
+                  }}
+                >
+                  {refreshMessage.text}
+                </span>
+              )}
+              <button
+                onClick={handleManualRefresh}
+                disabled={refreshing}
+                title={
+                  systemStatus?.lastScrapeStartedAt
+                    ? `Last refreshed ${fmtRelativeTime(systemStatus.lastScrapeStartedAt)}`
+                    : "Fetch the latest videos right now"
+                }
+                className="flex items-center gap-1.5 rounded-lg h-9 px-3 transition-colors hover:bg-white/5 disabled:opacity-50"
+                style={{ color: "var(--text-muted)", border: "1px solid var(--border)" }}
+              >
+                <span className={refreshing ? "animate-spin" : undefined}><RefreshIcon /></span>
+                <span className="text-xs" style={{ fontFamily: "Lora, serif" }}>
+                  {refreshing ? "Refreshing…" : "Refresh data"}
+                </span>
+              </button>
+              {!refreshing && systemStatus?.lastScrapeStartedAt && (
+                <span className="text-[10px] hidden sm:inline" style={{ color: "var(--text-muted)" }}>
+                  Updated {fmtRelativeTime(systemStatus.lastScrapeStartedAt)}
                 </span>
               )}
             </div>

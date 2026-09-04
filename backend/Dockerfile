@@ -1,5 +1,7 @@
-# Production image for the FastAPI backend. Multi-stage keeps the final
-# image from carrying pip's build cache / wheel cache around.
+# Production image for the FastAPI backend. Single stage — psycopg[binary]
+# ships prebuilt wheels so there's no compiler toolchain to keep out of the
+# final image, and PIP_NO_CACHE_DIR below already stops pip from caching
+# wheels on disk.
 FROM python:3.12-slim AS base
 
 ENV PYTHONDONTWRITEBYTECODE=1 \

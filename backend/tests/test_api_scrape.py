@@ -3,7 +3,16 @@ Auth behaviour for POST /api/scrape/run — the endpoint the GitHub Actions
 cron workflow calls daily. Doesn't exercise real scraping (no API
 keys/network in tests); just confirms the X-API-Key gate works, since a
 regression there would mean anyone who finds the URL can burn your quota.
+
+Also covers POST /api/scrape/run-manual — the dashboard's "Refresh now"
+button. It has no API key, so what's under test there is the cooldown
+instead: a scrape that ran recently should block a second one, and one
+that ran long enough ago (or never) should not.
 """
+
+import datetime as dt
+
+from app.models import ScrapeRun
 
 
 def test_scrape_run_requires_api_key(client):
@@ -45,3 +54,43 @@ def test_missing_server_secret_fails_closed(client, test_settings):
     test_settings.scrape_trigger_api_key = ""
     resp = client.post("/api/scrape/run", headers={"X-API-Key": "anything"})
     assert resp.status_code == 503
+
+
+def test_manual_scrape_requires_no_api_key(client):
+    # No X-API-Key header at all — this is the whole point of the endpoint.
+    resp = client.post("/api/scrape/run-manual")
+    assert resp.status_code == 200, resp.text
+    assert len(resp.json()["runs"]) == 2
+
+
+def test_manual_scrape_blocked_within_cooldown(client, db_session, test_settings):
+    db_session.add(ScrapeRun(platform="youtube", started_at=dt.datetime.utcnow(), status="success"))
+    db_session.commit()
+
+    resp = client.post("/api/scrape/run-manual", params={"platform": "youtube"})
+    assert resp.status_code == 429
+    assert "Retry-After" in resp.headers
+    assert "Try again in" in resp.json()["detail"]
+
+
+def test_manual_scrape_allowed_once_cooldown_elapses(client, db_session, test_settings):
+    stale = dt.datetime.utcnow() - dt.timedelta(seconds=test_settings.manual_scrape_cooldown_seconds + 1)
+    db_session.add(ScrapeRun(platform="youtube", started_at=stale, status="success"))
+    db_session.commit()
+
+    resp = client.post("/api/scrape/run-manual", params={"platform": "youtube"})
+    assert resp.status_code == 200, resp.text
+
+
+def test_manual_scrape_cooldown_is_scoped_per_platform(client, db_session):
+    # A recent Instagram run shouldn't block a YouTube-only manual trigger.
+    db_session.add(ScrapeRun(platform="instagram", started_at=dt.datetime.utcnow(), status="success"))
+    db_session.commit()
+
+    resp = client.post("/api/scrape/run-manual", params={"platform": "youtube"})
+    assert resp.status_code == 200, resp.text
+
+
+def test_manual_scrape_rejects_unknown_platform(client):
+    resp = client.post("/api/scrape/run-manual", params={"platform": "tiktok"})
+    assert resp.status_code == 400
