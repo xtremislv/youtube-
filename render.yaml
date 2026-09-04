@@ -53,13 +53,14 @@ services:
   - type: web
     name: competitor-dashboard-frontend
     runtime: static
-    # Deliberately NOT "corepack enable && pnpm ..." — on Render's current
-    # Node 24 build image, corepack enable tries to replace the OS-provided
-    # /usr/bin/pnpm symlink and fails with "EROFS: read-only file system,
-    # unlink '/usr/bin/pnpm'" (that path is on a read-only image layer).
-    # Installing the pinned pnpm version straight via npm avoids corepack's
-    # symlink step entirely and lands in a writable location on PATH.
-    buildCommand: npm install -g pnpm@10.28.0 && pnpm install --frozen-lockfile && pnpm run build
+    # Deliberately NOT "corepack enable && ..." or "npm install -g pnpm ..."
+    # — Render's build image ships pnpm preinstalled at a read-only system
+    # path (/usr/lib/node_modules/pnpm), and both of those approaches try to
+    # overwrite it there, failing with EROFS. Render auto-provisions the
+    # pnpm version from package.json's "packageManager" field itself (same
+    # mechanism Vercel/Netlify use), so the build command just needs to use
+    # the pnpm Render already gives you rather than reinstalling it.
+    buildCommand: pnpm install --frozen-lockfile && pnpm run build
     staticPublishPath: ./dist
     envVars:
       - key: VITE_API_BASE_URL
