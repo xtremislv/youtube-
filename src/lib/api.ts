@@ -65,6 +65,11 @@ export interface ApiVideo {
   format: "short" | "long" | "reel";
   overperformRatio: number | null;
   overperformRatioMedian: number | null;
+  // SponsorBlock (see backend/app/sponsorblock.py) — YouTube-only; an
+  // Instagram video always reports false/null since there's no equivalent
+  // data source scraped for it.
+  hasSponsorSegment: boolean;
+  sponsorSegmentSeconds: number | null;
 }
 
 export interface VideoQuery {
@@ -81,6 +86,11 @@ export interface VideoQuery {
   // medianViews/overperformRatioMedian regardless of this, so a frontend
   // toggle between them never needs a re-fetch on its own.
   metric?: OverperformMetric;
+  // true = only videos SponsorBlock flagged as sponsored/campaign content;
+  // false = only videos SponsorBlock has actually checked and confirmed
+  // clean (undefined = no filter — see has_sponsor in
+  // backend/app/routers/videos.py for the "not yet checked" distinction).
+  hasSponsor?: boolean;
   limit?: number;
   offset?: number;
 }
@@ -202,6 +212,7 @@ export function fetchVideos(query: VideoQuery): Promise<VideoListResult> {
   if (query.format !== "all") params.set("format", query.format);
   if (query.sortBy) params.set("sort_by", query.sortBy);
   if (query.metric) params.set("metric", query.metric);
+  if (query.hasSponsor !== undefined) params.set("has_sponsor", String(query.hasSponsor));
   if (query.limit) params.set("limit", String(query.limit));
   if (query.offset) params.set("offset", String(query.offset));
   return request<VideoListResult>(`/api/videos?${params.toString()}`);

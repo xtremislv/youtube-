@@ -171,6 +171,7 @@ def parse_video_resource(raw: dict, *, channel_id: str) -> dict:
 class ChannelScrapeStats:
     videos_upserted: int = 0
     quota_units_used: int = 0
+    sponsor_checks_made: int = 0
     errors: list[str] = field(default_factory=list)
 
 
@@ -189,10 +190,24 @@ def resolve_channel_input(handle_or_url_or_id: str) -> tuple[str | None, str | N
     return None, normalize_handle(value, "youtube")
 
 
-def scrape_channel(client: YouTubeClient, db: Session, channel: Channel, *, settings) -> ChannelScrapeStats:
+def scrape_channel(
+    client: YouTubeClient,
+    db: Session,
+    channel: Channel,
+    *,
+    settings,
+    sponsor_budget: "SponsorCheckBudget | None" = None,
+) -> ChannelScrapeStats:
     """
     Refresh one already-tracked channel: discover new uploads, refresh view
-    counts for the whole tracked history, upsert, recompute baselines.
+    counts for the whole tracked history, upsert, recompute baselines, then
+    (if enabled) check newest-first for SponsorBlock segments.
+
+    ``sponsor_budget`` is normally shared across every channel in one
+    platform-wide scrape run (see app/scrape_service.py) so a single
+    channel's backlog can't eat the whole run's SponsorBlock allowance;
+    passing None (e.g. a standalone/test call) gives this channel its own
+    fresh budget sized from settings instead.
     """
     stats = ChannelScrapeStats()
 
@@ -235,6 +250,22 @@ def scrape_channel(client: YouTubeClient, db: Session, channel: Channel, *, sett
 
     db.flush()
     recompute_and_store_channel_baselines(db, channel.id, settings)
+
+    if settings.sponsorblock_enabled:
+        from app.sponsorblock import SponsorCheckBudget, check_and_store_sponsor_segments
+
+        budget = sponsor_budget if sponsor_budget is not None else SponsorCheckBudget(settings.sponsorblock_max_checks_per_scrape)
+        # Newest-first: a limited budget should prioritize this channel's
+        # most recent uploads (what a competitor-tracking dashboard cares
+        # about) over working through its back catalog.
+        newest_first_ids = [
+            row[0]
+            for row in db.query(Video.id)
+            .filter(Video.channel_id == channel.id)
+            .order_by(Video.published_at.desc())
+            .all()
+        ]
+        stats.sponsor_checks_made = check_and_store_sponsor_segments(db, settings, newest_first_ids, budget)
 
     stats.quota_units_used = client.quota_units_used
     return stats

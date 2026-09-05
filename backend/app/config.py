@@ -59,9 +59,37 @@ class Settings(BaseSettings):
     # widget as a percentage — does not enforce anything).
     youtube_daily_quota_budget: int = 10_000
 
+    # SponsorBlock (https://wiki.sponsor.ajay.app/w/API_Docs) — a free,
+    # crowdsourced, YouTube-only database of sponsor/self-promo segments
+    # inside videos, used to flag which competitor videos are running a
+    # sponsorship so much so it needs no API key. See app/sponsorblock.py.
+    sponsorblock_enabled: bool = True
+    sponsorblock_api_base: str = "https://sponsor.ajay.app"
+    # Segment categories counted as "sponsored" for the dashboard's badge/
+    # filter — see the full category list in app/sponsorblock.py's docstring.
+    sponsorblock_categories: str = "sponsor,selfpromo,exclusive_access"
+    # Re-querying SponsorBlock for a video we already checked recently just
+    # burns their free API for no benefit most of the time, so a video is
+    # only re-checked once this many hours have passed since its last check
+    # (segments do get submitted after a video's been out a while, so it's
+    # not a one-and-done check — just throttled).
+    sponsorblock_recheck_hours: int = 24
+    # Caps how many videos get a fresh SponsorBlock lookup in one YouTube
+    # scrape run (shared across every channel in that run, not per channel)
+    # — protects against a big backfill making hundreds of sequential HTTP
+    # calls and blowing the GitHub Actions job's --max-time or SponsorBlock's
+    # rate limit. Whatever doesn't fit this run gets picked up on the next
+    # one (there are several scheduled runs per day — see
+    # .github/workflows/daily-scrape.yml), newest videos first.
+    sponsorblock_max_checks_per_scrape: int = 40
+
     @property
     def cors_origin_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+
+    @property
+    def sponsorblock_category_list(self) -> list[str]:
+        return [c.strip() for c in self.sponsorblock_categories.split(",") if c.strip()]
 
 
 @lru_cache

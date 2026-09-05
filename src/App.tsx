@@ -131,6 +131,18 @@ function BarChartIcon() {
   );
 }
 
+// Sponsored/campaign filter chip + VideoCard badge — flags a video
+// SponsorBlock (see backend/app/sponsorblock.py) detected a sponsor/
+// self-promo/exclusive-access segment in.
+function MegaphoneIcon({ size = 12 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M3 11v3a1 1 0 0 0 1 1h2l3.5 5V6L6 10H4a1 1 0 0 0-1 1z" />
+      <path d="M13 8a4 4 0 0 1 0 8" /><path d="M16.5 5a8 8 0 0 1 0 14" />
+    </svg>
+  );
+}
+
 function XIcon({ size = 10 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
@@ -467,6 +479,17 @@ function Sidebar({
           </div>
         </div>
       </div>
+
+      {/* SponsorBlock attribution — required by their license for use of
+          the community-contributed segment database (see the module
+          docstring in backend/app/sponsorblock.py). Keep this visible
+          wherever the "Sponsored" badge/filter it powers is used. */}
+      <div className="px-3 pb-3 shrink-0">
+        <a href="https://sponsor.ajay.app" target="_blank" rel="noreferrer"
+          className="text-[10px] hover:underline" style={{ color: "var(--text-muted)", fontFamily: "Lora, serif" }}>
+          Sponsor data via SponsorBlock
+        </a>
+      </div>
     </aside>
   );
 }
@@ -611,7 +634,26 @@ interface Filters {
   metric: OverperformMetric;
   showChart: boolean;
   format: string;
+  sponsoredOnly: boolean;
 }
+
+// The "nothing filtered" starting point — used for the initial state and by
+// the Home button (see setActiveSection/setFilters in App()) so "go home"
+// reliably means the exact same thing both times, not just "whatever the
+// useState literal happened to say".
+const DEFAULT_FILTERS: Filters = {
+  platform: "all",
+  channels: [],
+  datePreset: "all",
+  dateFrom: "",
+  dateTo: "",
+  viewsThreshold: "",
+  sortBy: "ratio",
+  metric: "median",
+  showChart: false,
+  format: "all",
+  sponsoredOnly: false,
+};
 
 // Which format values make sense for a given platform, and their label —
 // YouTube channels are only ever "long" or "short" (see
@@ -819,6 +861,16 @@ function FilterBar({ filters, setFilters, viewMode, setViewMode, shownCount, tot
         Chart
       </button>
 
+      {/* Sponsored/campaign filter — SponsorBlock-detected (YouTube only,
+          see backend/app/sponsorblock.py). Only shows videos with a
+          confirmed sponsor segment, not merely "not yet checked". */}
+      <button onClick={() => set("sponsoredOnly")(!filters.sponsoredOnly)}
+        className={`filter-chip shrink-0 ${filters.sponsoredOnly ? "active" : ""}`}
+        title="Show only videos SponsorBlock flagged as sponsored/campaign content">
+        <MegaphoneIcon />
+        Sponsored
+      </button>
+
       {/* Spacer */}
       <div className="flex-1 min-w-0" />
 
@@ -904,6 +956,12 @@ function VideoCard({ video, mode, metric = "average" }: { video: Video; mode: Vi
           </div>
           <Sparkline ratio={ratio ?? 1} color={overColor} />
           {ratio != null && ratio >= 2 && <span className="badge-overperform text-[10px] px-2 py-0.5 rounded-full font-mono font-bold">OVP</span>}
+          {video.hasSponsorSegment && (
+            <span className="badge-sponsor flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full font-bold"
+              title={video.sponsorSegmentSeconds != null ? `~${Math.round(video.sponsorSegmentSeconds)}s sponsored segment (via SponsorBlock)` : "Sponsored segment detected (via SponsorBlock)"}>
+              <MegaphoneIcon size={9} />SPONSORED
+            </span>
+          )}
         </div>
       </Wrapper>
     );
@@ -926,6 +984,12 @@ function VideoCard({ video, mode, metric = "average" }: { video: Video; mode: Vi
             {video.platform === "youtube" ? <YTIcon size={9} /> : <IGIcon size={9} />}
             {video.platform === "youtube" ? "YT" : "IG"}
           </span>
+          {video.hasSponsorSegment && (
+            <span className="badge-sponsor text-[10px] px-1.5 py-0.5 rounded-sm flex items-center gap-1"
+              title={video.sponsorSegmentSeconds != null ? `~${Math.round(video.sponsorSegmentSeconds)}s sponsored segment (via SponsorBlock)` : "Sponsored segment detected (via SponsorBlock)"}>
+              <MegaphoneIcon size={9} />SPONSORED
+            </span>
+          )}
         </div>
         <div className="absolute top-2 right-2">
           {/* Opaque (not translucent) background — a low-opacity fill here
@@ -1247,18 +1311,7 @@ export default function App() {
   const [viewMode, setViewMode] = useState<ViewMode>("grid");
   const notifRef = useRef<HTMLDivElement>(null);
 
-  const [filters, setFilters] = useState<Filters>({
-    platform: "all",
-    channels: [],
-    datePreset: "all",
-    dateFrom: "",
-    dateTo: "",
-    viewsThreshold: "",
-    sortBy: "ratio",
-    metric: "median",
-    showChart: false,
-    format: "all",
-  });
+  const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
 
   const [channels, setChannels] = useState<Channel[]>([]);
   const [cohorts, setCohorts] = useState<CohortSummary[]>([]);
@@ -1359,6 +1412,7 @@ export default function App() {
         format: filters.format,
         sortBy: filters.sortBy,
         metric: filters.metric,
+        hasSponsor: filters.sponsoredOnly ? true : undefined,
         limit: VIDEOS_PAGE_SIZE,
         offset: 0,
       })
@@ -1391,6 +1445,7 @@ export default function App() {
       format: filters.format,
       sortBy: filters.sortBy,
       metric: filters.metric,
+      hasSponsor: filters.sponsoredOnly ? true : undefined,
       limit: VIDEOS_PAGE_SIZE,
       offset: videos.length,
     })
@@ -1472,8 +1527,8 @@ export default function App() {
               style={{ color: "var(--text-muted)", border: "1px solid var(--border)" }}>
               <MenuIcon />
             </button>
-            <button onClick={() => setActiveSection("Overperformance")}
-              title="Home"
+            <button onClick={() => { setActiveSection("Overperformance"); setFilters(DEFAULT_FILTERS); setViewMode("grid"); }}
+              title="Home — back to Overperformance with every filter cleared"
               className="flex items-center justify-center rounded-lg size-8 transition-colors hover:bg-white/5"
               style={{
                 color: activeSection === "Overperformance" ? "var(--accent-light)" : "var(--text-muted)",

@@ -50,6 +50,8 @@ def _to_out(video: Video) -> VideoOut:
         format=video.format,
         overperform_ratio=video.overperform_ratio,
         overperform_ratio_median=video.overperform_ratio_median,
+        has_sponsor_segment=video.has_sponsor_segment,
+        sponsor_segment_seconds=video.sponsor_segment_seconds,
     )
 
 
@@ -72,6 +74,15 @@ def list_videos(
     ),
     overperform_ratio_threshold: float | None = Query(
         default=None, description="Overrides OVERPERFORM_RATIO_DEFAULT for the returned overperformCount only."
+    ),
+    has_sponsor: bool | None = Query(
+        default=None,
+        description=(
+            "Filter by SponsorBlock-detected sponsor/campaign segments (see app/sponsorblock.py) — "
+            "true = only videos with one; false = only videos SponsorBlock has actually been checked for "
+            "and confirmed clean (not yet checked doesn't count as 'confirmed clean'). YouTube-only: an "
+            "Instagram video is never flagged, since there's no equivalent data source for it."
+        ),
     ),
     limit: int = Query(default=500, ge=1, le=2000),
     offset: int = Query(default=0, ge=0),
@@ -98,6 +109,10 @@ def list_videos(
             query = query.filter(or_(Video.format == "short", Video.format == "reel"))
         else:
             query = query.filter(Video.format == format)
+    if has_sponsor is True:
+        query = query.filter(Video.has_sponsor_segment.is_(True))
+    elif has_sponsor is False:
+        query = query.filter(Video.sponsor_checked_at.is_not(None), Video.has_sponsor_segment.is_(False))
 
     total = query.count()
     overperform_count = query.filter(ratio_column.is_not(None), ratio_column >= threshold).count()

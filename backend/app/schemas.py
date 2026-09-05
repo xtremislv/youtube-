@@ -98,6 +98,11 @@ class VideoOut(CamelModel):
     format: str
     overperform_ratio: float | None = Field(default=None, serialization_alias="overperformRatio")
     overperform_ratio_median: float | None = Field(default=None, serialization_alias="overperformRatioMedian")
+    # SponsorBlock (see app/sponsorblock.py) — YouTube-only; an Instagram
+    # video always has has_sponsor_segment=False / sponsor_segment_seconds
+    # =None since there's no equivalent data source scraped for those.
+    has_sponsor_segment: bool = Field(default=False, serialization_alias="hasSponsorSegment")
+    sponsor_segment_seconds: float | None = Field(default=None, serialization_alias="sponsorSegmentSeconds")
 
     model_config = ConfigDict(alias_generator=_camel, populate_by_name=True, from_attributes=True, arbitrary_types_allowed=True)
 

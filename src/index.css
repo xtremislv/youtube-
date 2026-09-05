@@ -86,6 +86,13 @@ body,
   color: #4ade80;
   border: 1px solid rgba(74,222,128,0.3);
 }
+/* SponsorBlock-detected sponsor/campaign segment (see backend/app/sponsorblock.py) — amber so it reads distinctly from the green OVP badge. */
+.badge-sponsor {
+  background: rgba(245,158,11,0.15);
+  color: #fbbf24;
+  border: 1px solid rgba(245,158,11,0.35);
+  font-family: "JetBrains Mono", monospace;
+}
 
 .notification-dot {
   position: absolute;

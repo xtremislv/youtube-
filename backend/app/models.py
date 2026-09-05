@@ -93,6 +93,15 @@ class Video(Base):
     median_views_baseline: Mapped[float | None] = mapped_column(Float, nullable=True)
     overperform_ratio_median: Mapped[float | None] = mapped_column(Float, nullable=True, index=True)
 
+    # SponsorBlock (see app/sponsorblock.py) — YouTube-only; always False/
+    # null for Instagram rows, since there's no equivalent data source for
+    # those. sponsor_checked_at is null until the first check ever runs,
+    # and is how app/sponsorblock.py throttles re-checking an already-
+    # checked video (Settings.sponsorblock_recheck_hours).
+    has_sponsor_segment: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, index=True)
+    sponsor_segment_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
+    sponsor_checked_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
     first_seen_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=dt.datetime.utcnow)
     scraped_at: Mapped[dt.datetime] = mapped_column(
         DateTime(timezone=True), default=dt.datetime.utcnow, onupdate=dt.datetime.utcnow

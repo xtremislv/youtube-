@@ -91,15 +91,20 @@ def _scrape_platform(db: Session, settings: Settings, platform: str) -> ScrapeRu
 
 def _run_youtube(db: Session, settings: Settings, channels: list[Channel], run: ScrapeRun, errors: list[str]) -> None:
     from app.scrapers.youtube import YouTubeClient, scrape_channel
+    from app.sponsorblock import SponsorCheckBudget
 
     if not settings.youtube_api_key:
         errors.append("YOUTUBE_API_KEY is not configured.")
         return
 
     client = YouTubeClient(settings.youtube_api_key)
+    # Shared across every channel in this run — see SponsorCheckBudget's
+    # docstring on why one channel's backlog shouldn't eat the whole run's
+    # SponsorBlock allowance.
+    sponsor_budget = SponsorCheckBudget(settings.sponsorblock_max_checks_per_scrape)
     for channel in channels:
         try:
-            stats = scrape_channel(client, db, channel, settings=settings)
+            stats = scrape_channel(client, db, channel, settings=settings, sponsor_budget=sponsor_budget)
             run.videos_upserted += stats.videos_upserted
             run.channels_processed += 1
             errors.extend(stats.errors)
