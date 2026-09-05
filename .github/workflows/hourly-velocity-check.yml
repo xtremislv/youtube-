@@ -1,0 +1,41 @@
+# Hourly trigger for early-velocity (h1/h3/h6) checkpoint capture — see
+# backend/app/velocity.py.
+#
+# Why this is a separate workflow from daily-scrape.yml rather than an extra
+# step there: catching a video's 1-hour mark (and 3h/6h) needs a check
+# roughly every hour, around the clock — daily-scrape.yml only runs ~6x/day,
+# spaced 2.5-3.5 hours apart during the daytime IST, with a ~12-hour gap
+# overnight (22:00-10:00 IST) where nothing runs at all. This workflow runs
+# every hour, all day, so a video published at any time of day still has a
+# real chance at each checkpoint landing inside its grace window (see
+# Settings.velocity_checkpoint_grace_hours).
+#
+# Uses the same BACKEND_URL / SCRAPE_TRIGGER_API_KEY secrets as
+# daily-scrape.yml — no new secrets to add if that workflow is already set
+# up. Quota cost is small: this only looks at recently-published videos
+# still inside their checkpoint window, not a channel's full history (see
+# app/velocity.py's docstring and backend/README.md's quota section).
+#
+# You can also trigger a run manually any time from the Actions tab
+# ("Run workflow").
+
+name: Velocity checkpoint check
+
+on:
+  schedule:
+    - cron: "0 * * * *"  # every hour, on the hour, UTC
+  workflow_dispatch: {}
+
+jobs:
+  check-velocity:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger velocity checkpoint check
+        run: |
+          curl --fail --show-error --silent \
+            --max-time 120 --retry 3 --retry-delay 15 \
+            -X POST "${BACKEND_URL}/api/scrape/check-velocity" \
+            -H "X-API-Key: ${SCRAPE_API_KEY}"
+        env:
+          BACKEND_URL: ${{ secrets.BACKEND_URL }}
+          SCRAPE_API_KEY: ${{ secrets.SCRAPE_TRIGGER_API_KEY }}

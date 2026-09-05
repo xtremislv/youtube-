@@ -103,6 +103,18 @@ class VideoOut(CamelModel):
     # =None since there's no equivalent data source scraped for those.
     has_sponsor_segment: bool = Field(default=False, serialization_alias="hasSponsorSegment")
     sponsor_segment_seconds: float | None = Field(default=None, serialization_alias="sponsorSegmentSeconds")
+    # Early-velocity checkpoints (see app/velocity.py) — YouTube-only, and
+    # only populated going forward from whenever that feature shipped, so
+    # most videos (especially anything scraped before then, and every
+    # Instagram video) will report null/null for all three. Each pair is
+    # None until that checkpoint either lands within its grace window or
+    # permanently misses it — the frontend should render "—", not 0.
+    h1_views: int | None = Field(default=None, serialization_alias="h1Views")
+    h1_ratio: float | None = Field(default=None, serialization_alias="h1Ratio")
+    h3_views: int | None = Field(default=None, serialization_alias="h3Views")
+    h3_ratio: float | None = Field(default=None, serialization_alias="h3Ratio")
+    h6_views: int | None = Field(default=None, serialization_alias="h6Views")
+    h6_ratio: float | None = Field(default=None, serialization_alias="h6Ratio")
 
     model_config = ConfigDict(alias_generator=_camel, populate_by_name=True, from_attributes=True, arbitrary_types_allowed=True)
 
@@ -152,6 +164,15 @@ class ScrapeTriggerResponse(BaseModel):
 class CohortOut(BaseModel):
     label: str
     count: int
+
+
+class VelocityCheckResponse(CamelModel):
+    """POST /api/scrape/check-velocity's response — see app/velocity.py."""
+
+    message: str
+    videos_checked: int
+    checkpoints_captured: int
+    channels_recomputed: int
 
 
 # ── Workspace settings (sidebar toggles) ────────────────────────────────────

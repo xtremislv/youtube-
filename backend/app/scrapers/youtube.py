@@ -146,7 +146,8 @@ def parse_video_resource(raw: dict, *, channel_id: str) -> dict:
     thumb = thumbnails.get("high") or thumbnails.get("medium") or thumbnails.get("default") or {}
 
     duration_seconds = parse_iso8601_duration(content.get("duration", ""))
-    published_at = dt.datetime.fromisoformat(snippet["publishedAt"].replace("Z", "+00:00")).date()
+    published_at_ts = dt.datetime.fromisoformat(snippet["publishedAt"].replace("Z", "+00:00"))
+    published_at = published_at_ts.date()
 
     return {
         "id": f"youtube:{raw['id']}",
@@ -159,6 +160,13 @@ def parse_video_resource(raw: dict, *, channel_id: str) -> dict:
         "likes": int(stats["likeCount"]) if "likeCount" in stats else None,
         "comments": int(stats["commentCount"]) if "commentCount" in stats else None,
         "published_at": published_at,
+        # Full instant, not just the date — see Video.published_at_ts's
+        # docstring in app/models.py (needed for velocity-tracking's
+        # elapsed-hours-since-publish math). Upserted every scrape same as
+        # everything else here, so even a video first tracked well after
+        # publish still gets a correct value (it just won't have any open
+        # velocity checkpoints left by then).
+        "published_at_ts": published_at_ts,
         "duration_seconds": duration_seconds,
         "format": classify_youtube_format(duration_seconds),
     }

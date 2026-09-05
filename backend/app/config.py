@@ -83,6 +83,23 @@ class Settings(BaseSettings):
     # .github/workflows/daily-scrape.yml), newest videos first.
     sponsorblock_max_checks_per_scrape: int = 40
 
+    # Early-velocity checkpoints (see app/velocity.py) — how many hours
+    # after publish to snapshot a YouTube video's views, so a channel's
+    # brand-new upload can be judged against how its *own* recent videos
+    # typically looked at the same age, not just its eventual lifetime
+    # total. Fed by its own hourly GitHub Actions workflow (separate from
+    # the 6x/day full scrape — see .github/workflows/hourly-velocity-
+    # check.yml), since catching a 1-hour mark needs roughly hourly checks
+    # around the clock, which the main scrape's ~2.5-3.5h daytime-only
+    # cadence can't provide.
+    velocity_checkpoints_hours: str = "1,3,6"
+    # How long past a checkpoint a check is still allowed to count as that
+    # checkpoint (e.g. a check landing at 3h40m still counts as "3h" with
+    # the default 2h grace). Past checkpoint+grace with nothing captured,
+    # that checkpoint is left permanently null rather than backfilled from
+    # by-then-stale data — an honest "missed" beats a misleading number.
+    velocity_checkpoint_grace_hours: float = 2.0
+
     @property
     def cors_origin_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
@@ -90,6 +107,10 @@ class Settings(BaseSettings):
     @property
     def sponsorblock_category_list(self) -> list[str]:
         return [c.strip() for c in self.sponsorblock_categories.split(",") if c.strip()]
+
+    @property
+    def velocity_checkpoint_hours_list(self) -> list[int]:
+        return sorted({int(h.strip()) for h in self.velocity_checkpoints_hours.split(",") if h.strip()})
 
 
 @lru_cache

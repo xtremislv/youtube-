@@ -123,3 +123,66 @@ def test_instagram_paused_toggle_also_blocks_manual_refresh(client):
     resp = client.post("/api/scrape/run-manual", params={"platform": "instagram"})
     assert resp.status_code == 200, resp.text
     assert resp.json()["runs"][0]["status"] == "skipped"
+
+
+# ── POST /api/scrape/check-velocity — see app/velocity.py ───────────────────
+# Same X-API-Key gate as /run (Depends(require_scrape_api_key)), so the auth
+# behavior is identical; the extra case here is that it fails closed with a
+# clear error when YOUTUBE_API_KEY itself isn't configured (this endpoint
+# always needs to actually call YouTube, unlike /run which can at least
+# record a "failed" ScrapeRun and return 200).
+
+
+def test_check_velocity_requires_api_key(client):
+    resp = client.post("/api/scrape/check-velocity")
+    assert resp.status_code == 401
+
+
+def test_check_velocity_rejects_wrong_api_key(client):
+    resp = client.post("/api/scrape/check-velocity", headers={"X-API-Key": "wrong"})
+    assert resp.status_code == 401
+
+
+def test_check_velocity_fails_closed_without_server_secret(client, test_settings):
+    test_settings.scrape_trigger_api_key = ""
+    resp = client.post("/api/scrape/check-velocity", headers={"X-API-Key": "anything"})
+    assert resp.status_code == 503
+
+
+def test_check_velocity_requires_youtube_api_key_configured(client):
+    # test_settings.youtube_api_key == "" (conftest.py) — no channels needed
+    # to hit this; the endpoint should refuse before ever querying videos.
+    resp = client.post("/api/scrape/check-velocity", headers={"X-API-Key": "test-secret"})
+    assert resp.status_code == 503
+    assert "YOUTUBE_API_KEY" in resp.json()["detail"]
+
+
+def test_check_velocity_reports_zero_activity_with_no_open_videos(client, test_settings):
+    test_settings.youtube_api_key = "fake-key-not-actually-called"
+    resp = client.post("/api/scrape/check-velocity", headers={"X-API-Key": "test-secret"})
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body == {
+        "message": "Checked 0 video(s), captured 0 checkpoint(s) across 0 channel(s).",
+        "videosChecked": 0,
+        "checkpointsCaptured": 0,
+        "channelsRecomputed": 0,
+    }
+
+
+def test_check_velocity_surfaces_a_clear_502_on_failure(client, test_settings, monkeypatch):
+    # Unlike /run (per-channel try/except, always 200 with a per-run
+    # status), /check-velocity has no per-video isolation — a YouTube API
+    # hiccup covers the whole batch. This should come back as a clean 502
+    # with a readable message, not a bare 500 stack trace.
+    import app.velocity as velocity_module
+
+    def _boom(db, settings, client=None):
+        raise RuntimeError("simulated YouTube API failure")
+
+    monkeypatch.setattr(velocity_module, "capture_velocity_snapshots", _boom)
+    test_settings.youtube_api_key = "fake-key"
+
+    resp = client.post("/api/scrape/check-velocity", headers={"X-API-Key": "test-secret"})
+    assert resp.status_code == 502
+    assert "simulated YouTube API failure" in resp.json()["detail"]

@@ -80,6 +80,9 @@ def test_parse_video_resource():
     assert parsed["likes"] == 312_000
     assert parsed["comments"] == 18_400
     assert parsed["published_at"] == dt.date(2026, 8, 14)
+    # Full instant too, not just the date — needed for velocity tracking's
+    # elapsed-hours-since-publish math (see Video.published_at_ts).
+    assert parsed["published_at_ts"] == dt.datetime(2026, 8, 14, 15, 0, 0, tzinfo=dt.timezone.utc)
     assert parsed["duration_seconds"] == parse_iso8601_duration("PT12M34S")
     assert parsed["format"] == "long"
 

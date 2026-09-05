@@ -82,6 +82,14 @@ class Video(Base):
     comments: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     published_at: Mapped[dt.date] = mapped_column(Date, nullable=False, index=True)
+    # The full publish instant, alongside the Date-only published_at above
+    # (kept for the existing baseline-by-day grouping and display code).
+    # Needed for velocity tracking (see app/velocity.py) — "views 3 hours
+    # after publish" can't be computed from a bare date. Only populated
+    # going forward from when this column shipped; null on older rows
+    # scraped before it existed, which is fine since those videos are long
+    # past any checkpoint window anyway.
+    published_at_ts: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     duration_seconds: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     format: Mapped[str] = mapped_column(String(8), nullable=False)  # "short" | "long" | "reel"
 
@@ -102,16 +110,76 @@ class Video(Base):
     sponsor_segment_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
     sponsor_checked_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
+    # Early-velocity tracking (see app/velocity.py) — YouTube-only for now,
+    # same reasoning as SponsorBlock above. Each h{N}_views is filled in
+    # once, the first time a check lands within that checkpoint's tolerance
+    # window (Settings.velocity_checkpoint_grace_hours) after publish; if
+    # that window passes with no check landing in it, the checkpoint is
+    # left permanently null ("missed") rather than backfilled from stale
+    # data. h{N}_ratio is that reading divided by the channel's own trailing
+    # baseline at that checkpoint (see compute_velocity_baselines) and is
+    # recomputed whenever new sibling videos get a checkpoint of their own.
+    # velocity_checked_at is the last time this video was looked at for
+    # velocity purposes at all (debugging/observability, not a throttle —
+    # the "still has an open checkpoint within its window" query already
+    # keeps a resolved video out of future checks).
+    h1_views: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    h1_ratio: Mapped[float | None] = mapped_column(Float, nullable=True)
+    h3_views: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    h3_ratio: Mapped[float | None] = mapped_column(Float, nullable=True)
+    h6_views: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    h6_ratio: Mapped[float | None] = mapped_column(Float, nullable=True)
+    velocity_checked_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
     first_seen_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=dt.datetime.utcnow)
     scraped_at: Mapped[dt.datetime] = mapped_column(
         DateTime(timezone=True), default=dt.datetime.utcnow, onupdate=dt.datetime.utcnow
     )
 
     channel: Mapped["Channel"] = relationship(back_populates="videos")
+    velocity_snapshots: Mapped[list["VideoVelocitySnapshot"]] = relationship(
+        back_populates="video", cascade="all, delete-orphan"
+    )
 
     __table_args__ = (
         Index("ix_videos_channel_published", "channel_id", "published_at"),
         Index("ix_videos_platform_published", "platform", "published_at"),
+    )
+
+
+class VideoVelocitySnapshot(Base):
+    """
+    Raw audit log backing the Video.h{N}_views/h{N}_ratio columns above —
+    one row per (video, checkpoint) the very first time that checkpoint is
+    successfully captured. Kept separate from Video itself (rather than
+    just the denormalized columns) for two reasons: it's what
+    compute_velocity_baselines actually reads to build each channel's
+    trailing baseline, and it means adding a checkpoint later (e.g. 12h,
+    24h) needs no schema change here — just a new value in
+    Settings.velocity_checkpoints_hours and new h12_*/h24_* columns on
+    Video, if/when that's wanted.
+    """
+
+    __tablename__ = "video_velocity_snapshots"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    video_id: Mapped[str] = mapped_column(ForeignKey("videos.id", ondelete="CASCADE"), nullable=False)
+    checkpoint_hours: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    views: Mapped[int] = mapped_column(Integer, nullable=False)
+    likes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    comments: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    captured_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=dt.datetime.utcnow)
+    # Actual elapsed time since publish at the moment of capture — rarely
+    # exactly `checkpoint_hours` on the nose, since checks only happen on
+    # the hourly cron's cadence, not the instant a video crosses a mark.
+    hours_since_publish: Mapped[float] = mapped_column(Float, nullable=False)
+
+    video: Mapped["Video"] = relationship(back_populates="velocity_snapshots")
+
+    __table_args__ = (
+        Index("ix_velocity_snapshots_video_checkpoint", "video_id", "checkpoint_hours", unique=True),
     )
 
 
