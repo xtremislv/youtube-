@@ -251,6 +251,33 @@ def test_disabled_setting_short_circuits(db_session):
     assert fake.calls == []
 
 
+def test_stale_skip_does_not_consume_budget(db_session):
+    """Regression test for a real bug: budget.take() used to run BEFORE the
+    platform/staleness checks, so a video skipped for being already-checked-
+    recently still burned a unit of the shared per-run budget. Since
+    scrape_channel passes a channel's *entire* tracked history every run
+    (not just newly-discovered videos), a channel with a big already-covered
+    backlog could silently eat the whole run's budget walking past videos
+    it already checked, starving every other channel's — and its own
+    remaining unchecked videos' — share of real lookups. Budget must only
+    be spent immediately before an actual network call."""
+    recent = dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=1)
+    db_session.add(Channel(id="youtube:c1", platform="youtube", external_id="c1", handle="c1", name="C1", avatar_initials="C1"))
+    db_session.add_all([_video("youtube:v1", checked_at=recent), _video("youtube:v2")])
+    db_session.commit()
+
+    fake = FakeSponsorBlockClient({"v2": [{"category": "sponsor", "segment": [0.0, 10.0]}]})
+    budget = SponsorCheckBudget(1)
+    checked = check_and_store_sponsor_segments(
+        db_session, _settings(), ["youtube:v1", "youtube:v2"], budget, client=fake
+    )
+
+    assert checked == 1
+    assert fake.calls == ["v2"]  # v1's stale-skip must not have cost the one unit v2 needed
+    assert budget.remaining == 0
+    assert db_session.get(Video, "youtube:v2").has_sponsor_segment is True
+
+
 def test_rate_limit_stops_remaining_checks_this_call(db_session):
     class RateLimitedAfterOne:
         def __init__(self):

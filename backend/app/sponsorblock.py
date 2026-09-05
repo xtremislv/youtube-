@@ -193,8 +193,6 @@ def check_and_store_sponsor_segments(
     try:
         cutoff = dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=settings.sponsorblock_recheck_hours)
         for video_id in video_ids:
-            if not budget.take():
-                break
             video = db.get(Video, video_id)
             if video is None or video.platform != "youtube":
                 continue
@@ -211,6 +209,18 @@ def check_and_store_sponsor_segments(
                     checked_at = checked_at.replace(tzinfo=dt.timezone.utc)
                 if checked_at >= cutoff:
                     continue
+
+            # Budget is only spent here, right before an actual network
+            # lookup — NOT at the top of the loop. ``video_ids`` is a
+            # channel's *entire* tracked history (see scrape_channel),
+            # so on every run after the first, most of it is already
+            # checked and fresh; charging the budget for those no-op
+            # skips would let a channel with a big already-covered
+            # backlog silently starve every other channel's (and its
+            # own remaining unchecked videos') share of this run's
+            # checks — which is exactly what happened before this fix.
+            if not budget.take():
+                break
 
             external_id = video_id.removeprefix("youtube:")
             try:
