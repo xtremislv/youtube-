@@ -36,9 +36,17 @@ def get_status(db: Session = Depends(get_db), settings: Settings = Depends(setti
 
     total_channels = db.query(func.count(Channel.id)).filter(Channel.is_active.is_(True)).scalar() or 0
     total_videos = db.query(func.count(Video.id)).scalar() or 0
+    # Uses the median baseline, matching the Overperformance page's default
+    # metric (see filters.metric in src/App.tsx) — this count backs the
+    # sidebar's "Overperformance" nav badge and the notification bell, both
+    # of which should agree with what the grid shows by default rather than
+    # silently reporting the average-based count while the grid shows median.
     overperform_count = (
         db.query(func.count(Video.id))
-        .filter(Video.overperform_ratio.is_not(None), Video.overperform_ratio >= settings.overperform_ratio_default)
+        .filter(
+            Video.overperform_ratio_median.is_not(None),
+            Video.overperform_ratio_median >= settings.overperform_ratio_default,
+        )
         .scalar()
         or 0
     )

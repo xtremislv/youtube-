@@ -148,6 +148,16 @@ function MenuIcon() {
   );
 }
 
+function HomeIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M4 11.5 12 4l8 7.5" />
+      <path d="M6 10v9h12v-9" />
+      <path d="M10 19v-5h4v5" />
+    </svg>
+  );
+}
+
 function TrendUpIcon() {
   return (
     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
@@ -247,17 +257,18 @@ function DonutChart({ ytCount, igCount }: { ytCount: number; igCount: number }) 
 
 // ─── Mini Bar Chart ───────────────────────────────────────────────────────────
 
-function BarChart({ videos }: { videos: Video[] }) {
+function BarChart({ videos, metric }: { videos: Video[]; metric: OverperformMetric }) {
   // A brand-new channel's freshest videos have no baseline yet (see
-  // backend/app/overperformance.py) — overperformRatio is null until enough
-  // history exists. Those can't be ranked here, so they're left out rather
-  // than crashing the max()/sort() below on a null.
-  const ranked = videos.filter((v): v is Video & { overperformRatio: number } => v.overperformRatio != null);
-  const top5 = [...ranked].sort((a, b) => b.overperformRatio - a.overperformRatio).slice(0, 6);
+  // backend/app/overperformance.py) — the chosen metric's ratio is null
+  // until enough history exists. Those can't be ranked here, so they're
+  // left out rather than crashing the max()/sort() below on a null.
+  const ratioOf = (v: Video) => (metric === "median" ? v.overperformRatioMedian : v.overperformRatio);
+  const ranked = videos.filter((v): v is Video & { overperformRatio: number; overperformRatioMedian: number } => ratioOf(v) != null);
+  const top5 = [...ranked].sort((a, b) => ratioOf(b)! - ratioOf(a)!).slice(0, 6);
   if (top5.length === 0) {
     return <div className="text-xs py-2" style={{ color: "var(--text-muted)" }}>Not enough scrape history yet to rank channels.</div>;
   }
-  const max = Math.max(...top5.map(v => v.overperformRatio));
+  const max = Math.max(...top5.map(v => ratioOf(v)!));
   return (
     <div className="flex flex-col gap-1.5 w-full">
       {top5.map(v => (
@@ -265,11 +276,11 @@ function BarChart({ videos }: { videos: Video[] }) {
           <span className="text-[10px] font-mono truncate w-28 shrink-0" style={{ color: "var(--text-muted)" }}>{v.channelName}</span>
           <div className="flex-1 h-1.5 rounded-full" style={{ background: "var(--bg-active)" }}>
             <div className="h-full rounded-full transition-all" style={{
-              width: `${(v.overperformRatio / max) * 100}%`,
+              width: `${(ratioOf(v)! / max) * 100}%`,
               background: v.platform === "youtube" ? "var(--yt-red)" : "var(--ig-pink)"
             }} />
           </div>
-          <span className="text-[10px] font-mono w-8 text-right shrink-0" style={{ color: "var(--accent-light)" }}>{v.overperformRatio.toFixed(1)}x</span>
+          <span className="text-[10px] font-mono w-8 text-right shrink-0" style={{ color: "var(--accent-light)" }}>{ratioOf(v)!.toFixed(1)}x</span>
         </div>
       ))}
     </div>
@@ -480,7 +491,10 @@ function NotificationPanel({ videos, loading, onClose }: { videos: Video[]; load
   const ytCount = videos.filter(v => v.platform === "youtube").length;
   const igCount = videos.filter(v => v.platform === "instagram").length;
   const totalViews = videos.reduce((s, v) => s + v.views, 0);
-  const avgRatio = videos.length ? (videos.reduce((s, v) => s + (v.overperformRatio ?? 0), 0) / videos.length) : 0;
+  // These videos were selected by their median ratio (see openNotifications
+  // in App()), so the stats shown here need to read the same field or the
+  // panel's own numbers won't add up against why a video is even listed.
+  const avgRatio = videos.length ? (videos.reduce((s, v) => s + (v.overperformRatioMedian ?? 0), 0) / videos.length) : 0;
 
   return (
     <div className="absolute right-0 top-12 z-50 w-80 rounded-xl overflow-hidden shadow-2xl"
@@ -539,7 +553,7 @@ function NotificationPanel({ videos, loading, onClose }: { videos: Video[]; load
             <div className="flex flex-col gap-2">
               {topVideos.map(v => (
                 <div key={v.id} className="flex items-center gap-2">
-                  <span className="text-[10px] w-7 shrink-0 font-mono font-bold" style={{ color: "#4ade80" }}>{fmtRatio(v.overperformRatio)}</span>
+                  <span className="text-[10px] w-7 shrink-0 font-mono font-bold" style={{ color: "#4ade80" }}>{fmtRatio(v.overperformRatioMedian)}</span>
                   <span className="text-xs truncate flex-1" style={{ color: "var(--text-secondary)", fontFamily: "Lora, serif" }}>{v.title}</span>
                   <span className={`text-[10px] px-1.5 rounded-sm ${v.platform === "youtube" ? "badge-yt" : "badge-ig"}`}>
                     {v.platform === "youtube" ? "YT" : "IG"}
@@ -599,6 +613,42 @@ interface Filters {
   format: string;
 }
 
+// Which format values make sense for a given platform, and their label —
+// YouTube channels are only ever "long" or "short" (see
+// classify_youtube_format in backend/app/scrapers/duration.py) and Instagram
+// content is always scraped as "reel" (backend/app/scrapers/instagram.py),
+// so showing all four options regardless of platform just offers filters
+// that can never match anything for that platform.
+const FORMAT_OPTIONS_BY_PLATFORM: Record<Platform, { value: string; label: string }[]> = {
+  all: [
+    { value: "all", label: "All Formats" },
+    { value: "long", label: "Long-form" },
+    { value: "short", label: "Shorts / Reels" },
+    { value: "reel", label: "Reels only" },
+  ],
+  youtube: [
+    { value: "all", label: "All Formats" },
+    { value: "long", label: "Long-form" },
+    { value: "short", label: "Shorts" },
+  ],
+  instagram: [
+    { value: "all", label: "All Formats" },
+    { value: "reel", label: "Reels only" },
+  ],
+};
+
+// Keeps the format filter valid whenever the platform changes — e.g.
+// switching to Instagram while "Long-form" or "Shorts" is selected snaps to
+// "Reels only" (the one format Instagram content ever has) instead of
+// silently keeping a filter that can no longer match anything; switching
+// away from Instagram while "Reels only" is selected resets to "All
+// Formats" for the same reason, in reverse.
+function nextFormatForPlatform(format: string, platform: Platform): string {
+  const valid = FORMAT_OPTIONS_BY_PLATFORM[platform].some(o => o.value === format);
+  if (valid) return format;
+  return platform === "instagram" ? "reel" : "all";
+}
+
 function FilterBar({ filters, setFilters, viewMode, setViewMode, shownCount, totalResults, channels }: {
   filters: Filters;
   setFilters: (f: Filters) => void;
@@ -638,7 +688,7 @@ function FilterBar({ filters, setFilters, viewMode, setViewMode, shownCount, tot
       {/* Platform toggle */}
       <div className="flex rounded-lg overflow-hidden shrink-0" style={{ border: "1px solid var(--border)" }}>
         {(["all", "youtube", "instagram"] as Platform[]).map(p => (
-          <button key={p} onClick={() => setFilters({ ...filters, platform: p, channels: [] })}
+          <button key={p} onClick={() => setFilters({ ...filters, platform: p, channels: [], format: nextFormatForPlatform(filters.format, p) })}
             className="flex items-center gap-1.5 px-3 py-1.5 text-xs transition-all"
             style={{
               background: filters.platform === p ? "var(--accent)" : "var(--bg-elevated)",
@@ -725,13 +775,13 @@ function FilterBar({ filters, setFilters, viewMode, setViewMode, shownCount, tot
           className="select-custom text-xs w-40 pr-3" style={{ fontFamily: "JetBrains Mono, monospace" }} />
       </div>
 
-      {/* Format filter */}
+      {/* Format filter — options narrow to what the current platform can
+          actually have (see FORMAT_OPTIONS_BY_PLATFORM above). */}
       <select value={filters.format} onChange={e => set("format")(e.target.value)}
         className="select-custom text-xs shrink-0" style={{ fontFamily: "Inter, sans-serif" }}>
-        <option value="all">All Formats</option>
-        <option value="long">Long-form</option>
-        <option value="short">Shorts / Reels</option>
-        <option value="reel">Reels only</option>
+        {FORMAT_OPTIONS_BY_PLATFORM[filters.platform].map(o => (
+          <option key={o.value} value={o.value}>{o.label}</option>
+        ))}
       </select>
 
       {/* Baseline metric — which trailing stat (mean vs. median) the
@@ -926,20 +976,20 @@ function VideoCard({ video, mode, metric = "average" }: { video: Video; mode: Vi
 
 // ─── Chart Panel ──────────────────────────────────────────────────────────────
 
-function ChartPanel({ videos }: { videos: Video[] }) {
+function ChartPanel({ videos, metric }: { videos: Video[]; metric: OverperformMetric }) {
   return (
     <div className="mx-5 mb-4 rounded-xl p-4" style={{ background: "var(--bg-card)", border: "1px solid var(--border)" }}>
       <div className="flex items-center justify-between mb-4">
         <div>
           <div className="text-sm font-semibold" style={{ color: "var(--text-primary)", fontFamily: "Lora, serif" }}>Overperformance by Channel</div>
-          <div className="text-xs" style={{ color: "var(--text-muted)" }}>Ratio vs channel baseline — filtered results</div>
+          <div className="text-xs" style={{ color: "var(--text-muted)" }}>Ratio vs channel {metric === "median" ? "median" : "average"} baseline — filtered results</div>
         </div>
         <div className="flex items-center gap-3 text-xs" style={{ fontFamily: "Lora, serif" }}>
           <span className="flex items-center gap-1.5"><span className="size-2 rounded-sm inline-block" style={{ background: "var(--yt-red)" }} />YouTube</span>
           <span className="flex items-center gap-1.5"><span className="size-2 rounded-sm inline-block" style={{ background: "var(--ig-pink)" }} />Instagram</span>
         </div>
       </div>
-      <BarChart videos={videos} />
+      <BarChart videos={videos} metric={metric} />
     </div>
   );
 }
@@ -1105,10 +1155,10 @@ function ChannelCard({ channel: c, onToggleActive, onRemove }: { channel: Channe
 // since picking one channel out of a strip you're already looking at is
 // faster than opening a dropdown and finding it in a list.
 
-function ChannelStatCard({ channel: c, active, onClick }: { channel: Channel; active: boolean; onClick: () => void }) {
+function ChannelStatCard({ channel: c, active, onClick, onClear }: { channel: Channel; active: boolean; onClick: () => void; onClear: () => void }) {
   return (
     <div
-      className="video-card flex flex-col gap-2 p-3 shrink-0"
+      className="video-card group relative flex flex-col gap-2 p-3 shrink-0"
       style={{
         width: 216,
         cursor: "pointer",
@@ -1126,12 +1176,24 @@ function ChannelStatCard({ channel: c, active, onClick }: { channel: Channel; ac
         }
       }}
     >
+      {/* Clears this channel back out of the filter — translucent and
+          barely visible at rest so it doesn't clutter the card, fully
+          opaque on hover so it's easy to hit once you're going for it. */}
+      <button
+        onClick={e => { e.stopPropagation(); onClear(); }}
+        title={`Clear ${c.name} filter`}
+        aria-label={`Clear ${c.name} filter`}
+        className="absolute top-1.5 right-1.5 flex items-center justify-center rounded-full opacity-20 group-hover:opacity-100 hover:!opacity-100 transition-opacity"
+        style={{ width: 18, height: 18, background: "rgba(10,12,18,0.85)", color: "var(--text-secondary)" }}
+      >
+        <XIcon size={8} />
+      </button>
       <div className="flex items-center gap-2">
         <div className="flex items-center justify-center rounded-full size-8 shrink-0 text-[11px] font-bold" style={{ background: "var(--bg-elevated)", color: "var(--accent-light)" }}>
           {c.avatarUrl ? <img src={c.avatarUrl} alt={c.name} className="size-8 rounded-full object-cover" /> : c.avatar}
         </div>
         <div className="flex-1 min-w-0">
-          <div className="text-xs font-semibold truncate" style={{ color: "var(--text-primary)", fontFamily: "Lora, serif" }}>{c.name}</div>
+          <div className="text-xs font-semibold truncate pr-4" style={{ color: "var(--text-primary)", fontFamily: "Lora, serif" }}>{c.name}</div>
           <div className="flex items-center gap-1.5 mt-0.5">
             <span className={`text-[9px] px-1 rounded ${c.platform === "youtube" ? "badge-yt" : "badge-ig"}`}>{c.platform === "youtube" ? "YT" : "IG"}</span>
             {c.cohort && <span className="filter-chip" style={{ fontSize: 9, padding: "1px 5px" }}>{c.cohort}</span>}
@@ -1148,10 +1210,14 @@ function ChannelStatCard({ channel: c, active, onClick }: { channel: Channel; ac
           <div className="text-xs font-bold font-mono" style={{ color: "var(--text-primary)" }}>{fmtViewsN(c.avgViews)}</div>
         </div>
         <div>
+          <div className="text-[9px]" style={{ color: "var(--text-muted)" }}>Median (last 10)</div>
+          <div className="text-xs font-bold font-mono" style={{ color: "var(--text-primary)" }}>{fmtViewsN(c.medianViewsLast10)}</div>
+        </div>
+        <div>
           <div className="text-[9px]" style={{ color: "var(--text-muted)" }}>Tracked</div>
           <div className="text-xs font-mono" style={{ color: "var(--text-muted)" }}>{c.videoCount} vid{c.videoCount === 1 ? "" : "s"}</div>
         </div>
-        <div>
+        <div className="col-span-2">
           <div className="text-[9px]" style={{ color: "var(--text-muted)" }}>Last pub.</div>
           <div className="text-xs font-mono" style={{ color: "var(--text-muted)" }}>{c.lastPublishedAt ? fmtDate(c.lastPublishedAt) : "—"}</div>
         </div>
@@ -1189,7 +1255,7 @@ export default function App() {
     dateTo: "",
     viewsThreshold: "",
     sortBy: "ratio",
-    metric: "average",
+    metric: "median",
     showChart: false,
     format: "all",
   });
@@ -1366,9 +1432,13 @@ export default function App() {
       const next = !o;
       if (next) {
         setNotifLoading(true);
-        fetchVideos({ platform: "all", channels: [], dateFrom: "", dateTo: "", viewsThreshold: "", format: "all", sortBy: "ratio", limit: 50 })
+        // metric: "median" matches the Overperformance page's default (see
+        // the initial filters.metric below) and app/routers/system.py's
+        // overperformCount, so the bell shows the same videos the badge
+        // count is counting rather than silently falling back to average.
+        fetchVideos({ platform: "all", channels: [], dateFrom: "", dateTo: "", viewsThreshold: "", format: "all", sortBy: "ratio", metric: "median", limit: 50 })
           .then(result => {
-            setNotifVideos(result.videos.filter(v => v.overperformRatio != null && v.overperformRatio >= 2));
+            setNotifVideos(result.videos.filter(v => v.overperformRatioMedian != null && v.overperformRatioMedian >= 2));
             setNotifLoading(false);
           })
           .catch(() => setNotifLoading(false));
@@ -1402,6 +1472,15 @@ export default function App() {
               style={{ color: "var(--text-muted)", border: "1px solid var(--border)" }}>
               <MenuIcon />
             </button>
+            <button onClick={() => setActiveSection("Overperformance")}
+              title="Home"
+              className="flex items-center justify-center rounded-lg size-8 transition-colors hover:bg-white/5"
+              style={{
+                color: activeSection === "Overperformance" ? "var(--accent-light)" : "var(--text-muted)",
+                border: `1px solid ${activeSection === "Overperformance" ? "var(--accent)" : "var(--border)"}`,
+              }}>
+              <HomeIcon />
+            </button>
             <div>
               <h1 className="text-sm font-bold leading-none" style={{ color: "var(--text-primary)", fontFamily: "Lora, serif" }}>
                 {activeSection}
@@ -1419,7 +1498,7 @@ export default function App() {
                 <span className="filter-chip active">
                   {filters.platform === "youtube" ? <YTIcon size={10} /> : <IGIcon size={10} />}
                   {filters.platform}
-                  <button onClick={() => setFilters({ ...filters, platform: "all" })}><XIcon /></button>
+                  <button onClick={() => setFilters({ ...filters, platform: "all", format: nextFormatForPlatform(filters.format, "all") })}><XIcon /></button>
                 </span>
               )}
               {filters.channels.length > 0 && (
@@ -1505,12 +1584,13 @@ export default function App() {
                       channel={c}
                       active={filters.channels.length === 1 && filters.channels[0] === c.id}
                       onClick={() => setFilters({ ...filters, channels: [c.id] })}
+                      onClear={() => setFilters({ ...filters, channels: filters.channels.filter(id => id !== c.id) })}
                     />
                   ))}
                 </div>
               )}
 
-              {filters.showChart && <ChartPanel videos={videos} />}
+              {filters.showChart && <ChartPanel videos={videos} metric={filters.metric} />}
 
               {videosError ? (
                 <div className="flex flex-col items-center justify-center h-64" style={{ color: "var(--text-muted)" }}>
