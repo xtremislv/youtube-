@@ -8,6 +8,22 @@ body,
   overflow: hidden;
 }
 
+/*
+ * Theming: this file defines the DARK palette as the default (":root"),
+ * plus a full LIGHT override under ":root[data-theme=\"light\"]" — same
+ * hues throughout, just re-pitched shades so cards/text/borders keep the
+ * same relative contrast on a light surface. src/App.tsx sets
+ * data-theme="light"|"dark" on <html> (defaulting to the OS/browser
+ * color-scheme preference on first load, then remembering an explicit
+ * toggle choice — see getStoredTheme/detectSystemTheme in App()).
+ *
+ * A few colors are deliberately theme-INVARIANT and have no override
+ * below: --yt-red/--ig-pink as small solid swatches (chart legend keys,
+ * platform bars) read fine on either background; the video-card
+ * thumbnail overlays (duration/ratio badges) sit on a fixed near-opaque
+ * near-black scrim by design (see the comments in App.tsx) so their text
+ * colors are hardcoded, not variables at all.
+ */
 :root {
   --bg-base: #0f131c;
   --bg-panel: #181b25;
@@ -17,6 +33,10 @@ body,
   --accent: #8083ff;
   --accent-light: #c0c1ff;
   --accent-dim: rgba(128, 131, 255, 0.15);
+  /* Text color for anything sitting directly on a solid var(--accent) fill
+     (active nav item, active platform/metric toggle, primary buttons) —
+     --accent itself doesn't change between themes, so neither does this. */
+  --on-accent: #0d0096;
   --text-primary: #dfe2ef;
   --text-secondary: #c7c4d7;
   --text-muted: #908fa0;
@@ -25,6 +45,33 @@ body,
   --ig-pink: #e1306c;
   --success: #4ade80;
   --warning: #facc15;
+  --tier-danger: #f87171;
+  --tier-orange: #fb923c;
+  --hover-overlay: rgba(255, 255, 255, 0.05);
+  /* The sticky filter bar's own translucent-blur background — tracks
+     --bg-base's color per theme rather than a fixed dark value, so it
+     doesn't stay dark-navy over a light page. */
+  --surface-translucent: rgba(15, 19, 28, 0.92);
+}
+
+:root[data-theme="light"] {
+  --bg-base: #f3f4f9;
+  --bg-panel: #ffffff;
+  --bg-card: #ffffff;
+  --bg-elevated: #edeff5;
+  --bg-active: #e1e4ee;
+  --accent-light: #4c46c9;
+  --accent-dim: rgba(106, 99, 242, 0.12);
+  --text-primary: #171923;
+  --text-secondary: #4a4e5c;
+  --text-muted: #70748a;
+  --border: rgba(23, 25, 35, 0.12);
+  --success: #15803d;
+  --warning: #a16207;
+  --tier-danger: #dc2626;
+  --tier-orange: #c2410c;
+  --hover-overlay: rgba(23, 25, 35, 0.05);
+  --surface-translucent: rgba(255, 255, 255, 0.92);
 }
 
 * {
@@ -36,6 +83,13 @@ body,
 
 .sidebar-slide {
   transition: width 0.28s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.22s ease;
+}
+
+/* Replaces Tailwind's fixed "hover:bg-white/5" utility on plain icon/nav
+   buttons — that fixed white tint disappears (or worse, looks like a dirty
+   smudge) on a light background, so this reads off the theme instead. */
+.hover-surface:hover {
+  background: var(--hover-overlay);
 }
 
 .filter-chip {
@@ -83,7 +137,7 @@ body,
 }
 .badge-overperform {
   background: rgba(74,222,128,0.12);
-  color: #4ade80;
+  color: var(--success);
   border: 1px solid rgba(74,222,128,0.3);
 }
 /* SponsorBlock-detected sponsor/campaign segment (see backend/app/sponsorblock.py) — amber so it reads distinctly from the green OVP badge. */
@@ -92,6 +146,33 @@ body,
   color: #fbbf24;
   border: 1px solid rgba(245,158,11,0.35);
   font-family: "JetBrains Mono", monospace;
+}
+
+/* These four badges all use the same "pale translucent tint + bright
+   saturated ink" pattern, which relies on the DARK page/card background
+   behind the tint to read as a dark-ish chip. On the light theme's white
+   cards that same tint is nearly invisible and the bright ink becomes
+   low-contrast — so each gets a light-mode override: same hue, deepened
+   ink, slightly firmer tint/border. */
+:root[data-theme="light"] .badge-yt {
+  background: rgba(255,68,68,0.12);
+  color: #c81e2b;
+  border: 1px solid rgba(255,68,68,0.35);
+}
+:root[data-theme="light"] .badge-ig {
+  background: rgba(225,48,108,0.12);
+  color: #a3134f;
+  border: 1px solid rgba(225,48,108,0.4);
+}
+:root[data-theme="light"] .badge-overperform {
+  background: rgba(74,222,128,0.15);
+  border: 1px solid rgba(74,222,128,0.4);
+  /* color inherited from --success, which already has a light override above */
+}
+:root[data-theme="light"] .badge-sponsor {
+  background: rgba(245,158,11,0.15);
+  color: #92400e;
+  border: 1px solid rgba(245,158,11,0.4);
 }
 
 .notification-dot {
@@ -126,4 +207,9 @@ body,
 input[type="date"].select-custom::-webkit-calendar-picker-indicator {
   filter: invert(0.6);
   cursor: pointer;
+}
+:root[data-theme="light"] input[type="date"].select-custom::-webkit-calendar-picker-indicator {
+  /* The native icon already renders dark, which is what a light surface
+     needs — the dark-mode invert() above would wash it out to near-white. */
+  filter: none;
 }

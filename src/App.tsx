@@ -28,6 +28,29 @@ import {
 
 type Platform = "youtube" | "instagram" | "all";
 type ViewMode = "grid" | "list";
+type Theme = "light" | "dark";
+
+// ─── Theme (light/dark) ─────────────────────────────────────────────────────
+// Defaults to the OS/browser color-scheme preference the first time someone
+// opens the dashboard (see detectSystemTheme); the sidebar's toggle (see
+// handleToggleTheme in App()) then remembers an explicit choice in
+// localStorage, which takes over from the system preference from then on in
+// this browser. See src/index.css's ":root[data-theme=\"light\"]" block for
+// the actual light palette.
+
+function detectSystemTheme(): Theme {
+  if (typeof window === "undefined" || !window.matchMedia) return "dark";
+  return window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+}
+
+function getStoredTheme(): Theme | null {
+  try {
+    const v = window.localStorage.getItem("theme");
+    return v === "light" || v === "dark" ? v : null;
+  } catch {
+    return null; // privacy mode / storage disabled — just fall back to system
+  }
+}
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -170,6 +193,26 @@ function HomeIcon() {
   );
 }
 
+// Sidebar theme toggle.
+function SunIcon({ size = 13 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="4.5" />
+      <line x1="12" y1="1.5" x2="12" y2="4" /><line x1="12" y1="20" x2="12" y2="22.5" />
+      <line x1="4.2" y1="4.2" x2="5.9" y2="5.9" /><line x1="18.1" y1="18.1" x2="19.8" y2="19.8" />
+      <line x1="1.5" y1="12" x2="4" y2="12" /><line x1="20" y1="12" x2="22.5" y2="12" />
+      <line x1="4.2" y1="19.8" x2="5.9" y2="18.1" /><line x1="18.1" y1="5.9" x2="19.8" y2="4.2" />
+    </svg>
+  );
+}
+function MoonIcon({ size = 13 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M20.5 14.2A8.5 8.5 0 1 1 9.8 3.5a7 7 0 0 0 10.7 10.7z" />
+    </svg>
+  );
+}
+
 function TrendUpIcon() {
   return (
     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
@@ -260,7 +303,7 @@ function DonutChart({ ytCount, igCount }: { ytCount: number; igCount: number }) 
       <circle cx={cx} cy={cy} r={r} fill="none" stroke="rgba(225,48,108,0.25)" strokeWidth="8" />
       <circle cx={cx} cy={cy} r={r} fill="none" stroke="rgba(255,68,68,0.7)" strokeWidth="8"
         strokeDasharray={`${ytDash} ${circ - ytDash}`} strokeDashoffset={circ / 4} strokeLinecap="round" />
-      <text x={cx} y={cy + 4} textAnchor="middle" fill="#dfe2ef" fontSize="10" fontFamily="JetBrains Mono,monospace" fontWeight="500">
+      <text x={cx} y={cy + 4} textAnchor="middle" fill="var(--text-primary)" fontSize="10" fontFamily="JetBrains Mono,monospace" fontWeight="500">
         {Math.round(ytPct)}%
       </text>
     </svg>
@@ -318,7 +361,7 @@ function ToggleSwitch({ checked, onChange, disabled, label }: { checked: boolean
     >
       <span
         className="absolute rounded-full transition-transform"
-        style={{ width: 12, height: 12, top: 2, left: 2, background: checked ? "#0d0096" : "var(--text-muted)", transform: checked ? "translateX(16px)" : "translateX(0)" }}
+        style={{ width: 12, height: 12, top: 2, left: 2, background: checked ? "var(--on-accent)" : "var(--text-muted)", transform: checked ? "translateX(16px)" : "translateX(0)" }}
       />
     </button>
   );
@@ -338,6 +381,8 @@ interface SidebarProps {
   instagramScrapingEnabled: boolean | null;
   onToggleInstagramScraping: () => void;
   togglingScraper: boolean;
+  theme: Theme;
+  onToggleTheme: () => void;
 }
 
 function Sidebar({
@@ -350,6 +395,8 @@ function Sidebar({
   instagramScrapingEnabled,
   onToggleInstagramScraping,
   togglingScraper,
+  theme,
+  onToggleTheme,
 }: SidebarProps) {
   const navLinks = [
     { label: "Overperformance", icon: "chart", badge: overperformBadge },
@@ -375,11 +422,11 @@ function Sidebar({
                 mark with transparent corners, so no background/clip needed
                 here (unlike the old inline SVG glyph it replaces). */}
             <img src="/tw-logo.png" alt="TW-Labs" className="size-8" />
-            <span className="notification-dot" style={{ position: "absolute", top: 3, right: 3, width: 7, height: 7, background: "#c0c1ff", borderRadius: "50%", border: "1.5px solid var(--bg-panel)" }} />
+            <span className="notification-dot" style={{ position: "absolute", top: 3, right: 3, width: 7, height: 7, background: "var(--accent-light)", borderRadius: "50%", border: "1.5px solid var(--bg-panel)" }} />
           </div>
           <div>
             <div className="text-sm font-bold leading-none" style={{ color: "var(--text-primary)", fontFamily: "Lora, serif" }}>
-              TW<span style={{ color: "#c0c1ff" }}>-Labs</span>
+              TW<span style={{ color: "var(--accent-light)" }}>-Labs</span>
             </div>
           </div>
         </div>
@@ -397,8 +444,8 @@ function Sidebar({
               onClick={() => setActiveSection(link.label)}
               className="flex items-center gap-3 px-3 py-2 rounded-lg w-full text-left transition-all"
               style={{
-                background: activeSection === link.label ? "#8083ff" : "transparent",
-                color: activeSection === link.label ? "#0d0096" : "var(--text-secondary)",
+                background: activeSection === link.label ? "var(--accent)" : "transparent",
+                color: activeSection === link.label ? "var(--on-accent)" : "var(--text-secondary)",
               }}
             >
               <NavIcon icon={link.icon} active={activeSection === link.label} />
@@ -420,7 +467,7 @@ function Sidebar({
       <div className="px-2 mt-2 flex-1 min-h-0 overflow-y-auto">
         <div className="flex items-center justify-between px-3 py-2">
           <span className="text-[10px] tracking-widest uppercase" style={{ color: "var(--text-muted)", fontFamily: "Lora, serif" }}>Saved Cohorts</span>
-          <svg width="8" height="8" viewBox="0 0 8.16667 8.16667" fill="none"><path d={svgPaths.p10ad69c0} fill="#c0c1ff" /></svg>
+          <svg width="8" height="8" viewBox="0 0 8.16667 8.16667" fill="none"><path d={svgPaths.p10ad69c0} fill="var(--accent-light)" /></svg>
         </div>
         {cohorts.length === 0 ? (
           <div className="px-3 py-2 text-xs" style={{ color: "var(--text-muted)" }}>
@@ -428,7 +475,7 @@ function Sidebar({
           </div>
         ) : (
           cohorts.map((c, i) => (
-            <button key={c.label} className="flex items-center gap-3 px-3 py-2 rounded-lg w-full text-left hover:bg-white/5 transition-colors">
+            <button key={c.label} className="flex items-center gap-3 px-3 py-2 rounded-lg w-full text-left hover-surface transition-colors">
               <div className="size-2 rounded-sm shrink-0" style={{ background: COHORT_COLORS[i % COHORT_COLORS.length] }} />
               <span className="text-sm flex-1 text-left" style={{ color: "var(--text-secondary)", fontFamily: "Lora, serif" }}>{c.label}</span>
               <span className="text-sm" style={{ color: "var(--text-muted)", fontFamily: "JetBrains Mono, monospace" }}>{c.count}</span>
@@ -437,13 +484,28 @@ function Sidebar({
         )}
       </div>
 
+      {/* Appearance — light/dark theme toggle. Defaults to the OS/browser
+          color-scheme preference on first load; this switch's own choice
+          is then remembered (localStorage) and takes over from the system
+          for this browser — see getStoredTheme/detectSystemTheme + the
+          theme effects in App(). */}
+      <div className="px-2 pt-2 shrink-0">
+        <div className="rounded-xl p-3 flex items-center justify-between" style={{ background: "var(--bg-card)" }}>
+          <span className="flex items-center gap-2 text-[10px] tracking-widest uppercase" style={{ color: "var(--text-secondary)", fontFamily: "Lora, serif" }}>
+            {theme === "light" ? <SunIcon /> : <MoonIcon />}
+            {theme === "light" ? "Light Mode" : "Dark Mode"}
+          </span>
+          <ToggleSwitch checked={theme === "light"} onChange={onToggleTheme} label="Toggle light/dark theme" />
+        </div>
+      </div>
+
       {/* Apify Usage — pauses Instagram (Apify) scraping to save Apify
           credit. Enforced server-side in app/scrape_service.py so it holds
           for the GitHub Actions schedule too, not just this dashboard's own
           "Refresh data" button — see WorkspaceSettings in
           backend/app/models.py. */}
       <div className="px-2 pt-2 shrink-0">
-        <div className="rounded-xl p-3" style={{ background: "#1c1f29" }}>
+        <div className="rounded-xl p-3" style={{ background: "var(--bg-card)" }}>
           <div className="flex items-center justify-between mb-1.5">
             <span className="text-[10px] tracking-widest uppercase" style={{ color: "var(--text-secondary)", fontFamily: "Lora, serif" }}>Apify Usage</span>
             <ToggleSwitch
@@ -463,7 +525,7 @@ function Sidebar({
 
       {/* API Quota */}
       <div className="p-2 shrink-0">
-        <div className="rounded-xl p-3" style={{ background: "#1c1f29" }}>
+        <div className="rounded-xl p-3" style={{ background: "var(--bg-card)" }}>
           <div className="flex items-center justify-between mb-2">
             <span className="text-[10px] tracking-widest uppercase" style={{ color: "var(--text-secondary)", fontFamily: "Lora, serif" }}>API Quota</span>
             <span className="text-xs font-bold" style={{ color: "var(--text-primary)", fontFamily: "JetBrains Mono, monospace" }}>
@@ -475,7 +537,7 @@ function Sidebar({
           </div>
           <div className="flex items-center justify-between mt-2">
             <span className="text-[11px]" style={{ color: "var(--text-muted)", fontFamily: "Lora, serif" }}>YouTube Data API, today</span>
-            <svg width="11" height="9" viewBox="0 0 11.6676 9.33333" fill="none"><path d={svgPaths.p1cccc530} fill="#908fa0" /></svg>
+            <svg width="11" height="9" viewBox="0 0 11.6676 9.33333" fill="none"><path d={svgPaths.p1cccc530} fill="var(--text-muted)" /></svg>
           </div>
         </div>
       </div>
@@ -495,7 +557,7 @@ function Sidebar({
 }
 
 function NavIcon({ icon, active }: { icon: string; active: boolean }) {
-  const color = active ? "#0d0096" : "#c7c4d7";
+  const color = active ? "var(--on-accent)" : "var(--text-secondary)";
   const icons: Record<string, React.ReactElement> = {
     chart: <svg width="16" height="13" viewBox="0 0 16.6681 13.3333" fill="none"><path d={svgPaths.p350ec980} fill={color} /></svg>,
     people: <svg width="20" height="10" viewBox="0 0 20 10" fill="none"><path d={svgPaths.p279daa80} fill={color} /></svg>,
@@ -576,7 +638,7 @@ function NotificationPanel({ videos, loading, onClose }: { videos: Video[]; load
             <div className="flex flex-col gap-2">
               {topVideos.map(v => (
                 <div key={v.id} className="flex items-center gap-2">
-                  <span className="text-[10px] w-7 shrink-0 font-mono font-bold" style={{ color: "#4ade80" }}>{fmtRatio(v.overperformRatioMedian)}</span>
+                  <span className="text-[10px] w-7 shrink-0 font-mono font-bold" style={{ color: "var(--success)" }}>{fmtRatio(v.overperformRatioMedian)}</span>
                   <span className="text-xs truncate flex-1" style={{ color: "var(--text-secondary)", fontFamily: "Lora, serif" }}>{v.title}</span>
                   <span className={`text-[10px] px-1.5 rounded-sm ${v.platform === "youtube" ? "badge-yt" : "badge-ig"}`}>
                     {v.platform === "youtube" ? "YT" : "IG"}
@@ -640,13 +702,15 @@ interface Filters {
 // The "nothing filtered" starting point — used for the initial state and by
 // the Home button (see setActiveSection/setFilters in App()) so "go home"
 // reliably means the exact same thing both times, not just "whatever the
-// useState literal happened to say".
+// useState literal happened to say". Date range defaults to the last 3
+// days (computed fresh from "now" at load time via presetToRange, same as
+// picking "Last 3 days" from the dropdown by hand) rather than "All time",
+// so the dashboard opens onto what's recent instead of the entire history.
 const DEFAULT_FILTERS: Filters = {
   platform: "all",
   channels: [],
-  datePreset: "all",
-  dateFrom: "",
-  dateTo: "",
+  datePreset: "3d",
+  ...presetToRange("3d"),
   viewsThreshold: "",
   sortBy: "ratio",
   metric: "median",
@@ -725,7 +789,7 @@ function FilterBar({ filters, setFilters, viewMode, setViewMode, shownCount, tot
   const set = (k: keyof Filters) => (val: string | boolean) => setFilters({ ...filters, [k]: val });
 
   return (
-    <div className="sticky top-0 z-30 px-5 py-3 flex flex-wrap items-center gap-2" style={{ background: "rgba(15,19,28,0.92)", backdropFilter: "blur(12px)", borderBottom: "1px solid var(--border)" }}>
+    <div className="sticky top-0 z-30 px-5 py-3 flex flex-wrap items-center gap-2" style={{ background: "var(--surface-translucent)", backdropFilter: "blur(12px)", borderBottom: "1px solid var(--border)" }}>
 
       {/* Platform toggle */}
       <div className="flex rounded-lg overflow-hidden shrink-0" style={{ border: "1px solid var(--border)" }}>
@@ -734,7 +798,7 @@ function FilterBar({ filters, setFilters, viewMode, setViewMode, shownCount, tot
             className="flex items-center gap-1.5 px-3 py-1.5 text-xs transition-all"
             style={{
               background: filters.platform === p ? "var(--accent)" : "var(--bg-elevated)",
-              color: filters.platform === p ? "#0d0096" : "var(--text-muted)",
+              color: filters.platform === p ? "var(--on-accent)" : "var(--text-muted)",
               fontFamily: "Inter, sans-serif",
               fontWeight: 500,
             }}>
@@ -768,7 +832,7 @@ function FilterBar({ filters, setFilters, viewMode, setViewMode, shownCount, tot
               </div>
             ) : (
               platformChannels.map(c => (
-                <label key={c.id} className="flex items-center gap-2.5 px-3 py-2 cursor-pointer hover:bg-white/5 transition-colors">
+                <label key={c.id} className="flex items-center gap-2.5 px-3 py-2 cursor-pointer hover-surface transition-colors">
                   <input type="checkbox" checked={filters.channels.includes(c.id)} onChange={() => toggleChannel(c.id)}
                     className="accent-purple-400 cursor-pointer" />
                   <span className="text-xs flex-1" style={{ color: "var(--text-secondary)", fontFamily: "Lora, serif" }}>{c.name}</span>
@@ -836,7 +900,7 @@ function FilterBar({ filters, setFilters, viewMode, setViewMode, shownCount, tot
             className="px-3 py-1.5 text-xs transition-all"
             style={{
               background: filters.metric === m ? "var(--accent)" : "var(--bg-elevated)",
-              color: filters.metric === m ? "#0d0096" : "var(--text-muted)",
+              color: filters.metric === m ? "var(--on-accent)" : "var(--text-muted)",
               fontFamily: "Inter, sans-serif",
               fontWeight: 500,
             }}>
@@ -900,14 +964,31 @@ function FilterBar({ filters, setFilters, viewMode, setViewMode, shownCount, tot
 
 // ─── Video Card ───────────────────────────────────────────────────────────────
 
+// The grid-mode ratio badge sits on top of a video thumbnail behind an
+// intentionally near-opaque near-black scrim (see the "Opaque (not
+// translucent) background" comment below) so it stays legible over any
+// thumbnail image regardless of the site's own light/dark theme — so its
+// text needs fixed, always-bright colors rather than the theme-adaptive
+// ones everything else on the card uses.
+function overlayRatioColor(ratio: number | null): string {
+  if (ratio == null) return "#a8adc0";
+  if (ratio < 1) return "#f87171";
+  if (ratio >= 3) return "#4ade80";
+  if (ratio >= 2) return "#facc15";
+  return "#fb923c";
+}
+
 function VideoCard({ video, mode, metric = "average" }: { video: Video; mode: ViewMode; metric?: OverperformMetric }) {
   const ratio = metric === "median" ? video.overperformRatioMedian : video.overperformRatio;
+  // Used for anything drawn directly on the card's own (theme-adaptive)
+  // background — list-mode ratio text, the sparkline. See
+  // overlayRatioColor above for the one place that must NOT adapt.
   const overColor =
     ratio == null ? "var(--text-muted)"
-    : ratio < 1 ? "#f87171"   // underperforming vs. baseline — always red, regardless of tier below
-    : ratio >= 3 ? "#4ade80"
-    : ratio >= 2 ? "#facc15"
-    : "#fb923c";
+    : ratio < 1 ? "var(--tier-danger)"   // underperforming vs. baseline — always red, regardless of tier below
+    : ratio >= 3 ? "var(--success)"
+    : ratio >= 2 ? "var(--warning)"
+    : "var(--tier-orange)";
   const baselineLabel = metric === "median" ? "vs median" : "vs avg";
   const thumb = video.thumbnail;
   const Wrapper = video.url ? "a" : "div";
@@ -998,7 +1079,7 @@ function VideoCard({ video, mode, metric = "average" }: { video: Video; mode: Vi
               (underperforming), tiered green/yellow/orange at and above it. */}
           <span
             className="text-[10px] px-1.5 py-0.5 rounded-sm font-mono font-bold flex items-center gap-1"
-            style={{ background: "rgba(10,12,18,0.92)", color: overColor, border: `1px solid ${ratio == null ? "var(--border)" : overColor}` }}
+            style={{ background: "rgba(10,12,18,0.92)", color: overlayRatioColor(ratio), border: `1px solid ${overlayRatioColor(ratio)}` }}
           >
             <TrendUpIcon />{ratio == null ? "New" : `${ratio.toFixed(1)}x`}
           </span>
@@ -1123,11 +1204,11 @@ function CompetitorRoster({ channels, onChanged }: { channels: Channel[]; onChan
         </div>
         <button type="submit" disabled={submitting || !handle.trim()}
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all disabled:opacity-50"
-          style={{ background: "var(--accent)", color: "#0d0096" }}>
+          style={{ background: "var(--accent)", color: "var(--on-accent)" }}>
           <PlusIcon />
           {submitting ? "Adding…" : "Track channel"}
         </button>
-        {formError && <div className="text-xs w-full" style={{ color: "#fb923c" }}>{formError}</div>}
+        {formError && <div className="text-xs w-full" style={{ color: "var(--tier-orange)" }}>{formError}</div>}
       </form>
 
       {channels.length === 0 ? (
@@ -1177,7 +1258,7 @@ function ChannelCard({ channel: c, onToggleActive, onRemove }: { channel: Channe
         <button onClick={onToggleActive} className="text-xs px-2 py-1 rounded-lg shrink-0" style={{ color: "var(--text-muted)", border: "1px solid var(--border)" }}>
           {c.isActive ? "Pause" : "Resume"}
         </button>
-        <button onClick={onRemove} className="flex items-center justify-center rounded-lg size-8 shrink-0 hover:bg-white/5" style={{ color: "var(--text-muted)" }}>
+        <button onClick={onRemove} className="flex items-center justify-center rounded-lg size-8 shrink-0 hover-surface" style={{ color: "var(--text-muted)" }}>
           <TrashIcon />
         </button>
       </div>
@@ -1305,6 +1386,42 @@ const EMPTY_VIDEOS: Video[] = [];
 const VIDEOS_PAGE_SIZE = 60;
 
 export default function App() {
+  const [theme, setTheme] = useState<Theme>(() => getStoredTheme() ?? detectSystemTheme());
+
+  // Reflect the current theme onto <html> so src/index.css's
+  // ":root[data-theme=...]" overrides apply.
+  useEffect(() => {
+    document.documentElement.setAttribute("data-theme", theme);
+  }, [theme]);
+
+  // Keep following the OS/browser theme live — but only until the user
+  // makes an explicit choice via the sidebar toggle (handleToggleTheme),
+  // which persists to localStorage and takes over from the system from
+  // then on in this browser.
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.matchMedia) return;
+    const mq = window.matchMedia("(prefers-color-scheme: light)");
+    const handler = (e: MediaQueryListEvent) => {
+      if (getStoredTheme() != null) return; // explicit choice already governs
+      setTheme(e.matches ? "light" : "dark");
+    };
+    mq.addEventListener("change", handler);
+    return () => mq.removeEventListener("change", handler);
+  }, []);
+
+  const handleToggleTheme = useCallback(() => {
+    setTheme(prev => {
+      const next: Theme = prev === "light" ? "dark" : "light";
+      try {
+        window.localStorage.setItem("theme", next);
+      } catch {
+        // privacy mode / storage disabled — theme still applies for this
+        // page view, it just won't be remembered on the next visit.
+      }
+      return next;
+    });
+  }, []);
+
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [activeSection, setActiveSection] = useState("Overperformance");
   const [notifOpen, setNotifOpen] = useState(false);
@@ -1514,6 +1631,8 @@ export default function App() {
         instagramScrapingEnabled={scraperSettings?.instagramScrapingEnabled ?? null}
         onToggleInstagramScraping={handleToggleInstagramScraping}
         togglingScraper={togglingScraper}
+        theme={theme}
+        onToggleTheme={handleToggleTheme}
       />
 
       {/* Main */}
@@ -1523,13 +1642,13 @@ export default function App() {
         <div className="flex items-center justify-between px-5 py-3 shrink-0" style={{ borderBottom: "1px solid var(--border)", background: "var(--bg-panel)" }}>
           <div className="flex items-center gap-3">
             <button onClick={() => setSidebarOpen(o => !o)}
-              className="flex items-center justify-center rounded-lg size-8 transition-colors hover:bg-white/5"
+              className="flex items-center justify-center rounded-lg size-8 transition-colors hover-surface"
               style={{ color: "var(--text-muted)", border: "1px solid var(--border)" }}>
               <MenuIcon />
             </button>
             <button onClick={() => { setActiveSection("Overperformance"); setFilters(DEFAULT_FILTERS); setViewMode("grid"); }}
               title="Home — back to Overperformance with every filter cleared"
-              className="flex items-center justify-center rounded-lg size-8 transition-colors hover:bg-white/5"
+              className="flex items-center justify-center rounded-lg size-8 transition-colors hover-surface"
               style={{
                 color: activeSection === "Overperformance" ? "var(--accent-light)" : "var(--text-muted)",
                 border: `1px solid ${activeSection === "Overperformance" ? "var(--accent)" : "var(--border)"}`,
@@ -1576,9 +1695,9 @@ export default function App() {
                 <span
                   className="text-[11px] px-2 py-1 rounded-md whitespace-nowrap"
                   style={{
-                    color: refreshMessage.kind === "success" ? "var(--accent-light)" : "#f87171",
+                    color: refreshMessage.kind === "success" ? "var(--accent-light)" : "var(--tier-danger)",
                     background: "var(--bg-base)",
-                    border: `1px solid ${refreshMessage.kind === "success" ? "var(--accent)" : "#f87171"}`,
+                    border: `1px solid ${refreshMessage.kind === "success" ? "var(--accent)" : "var(--tier-danger)"}`,
                   }}
                 >
                   {refreshMessage.text}
@@ -1592,7 +1711,7 @@ export default function App() {
                     ? `Last refreshed ${fmtRelativeTime(systemStatus.lastScrapeStartedAt)}`
                     : "Fetch the latest videos right now"
                 }
-                className="flex items-center gap-1.5 rounded-lg h-9 px-3 transition-colors hover:bg-white/5 disabled:opacity-50"
+                className="flex items-center gap-1.5 rounded-lg h-9 px-3 transition-colors hover-surface disabled:opacity-50"
                 style={{ color: "var(--text-muted)", border: "1px solid var(--border)" }}
               >
                 <span className={refreshing ? "animate-spin" : undefined}><RefreshIcon /></span>
@@ -1610,7 +1729,7 @@ export default function App() {
             {/* Notification bell */}
             <div className="relative" ref={notifRef}>
               <button onClick={openNotifications}
-                className="flex items-center justify-center rounded-lg size-9 transition-colors hover:bg-white/5"
+                className="flex items-center justify-center rounded-lg size-9 transition-colors hover-surface"
                 style={{ color: notifOpen ? "var(--accent-light)" : "var(--text-muted)", border: `1px solid ${notifOpen ? "var(--accent)" : "var(--border)"}` }}>
                 <BellIcon />
                 <span className="notification-dot" />
