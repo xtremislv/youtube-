@@ -52,6 +52,12 @@ def _to_out(video: Video) -> VideoOut:
         overperform_ratio_median=video.overperform_ratio_median,
         has_sponsor_segment=video.has_sponsor_segment,
         sponsor_segment_seconds=video.sponsor_segment_seconds,
+        h1_views=video.h1_views,
+        h1_ratio=video.h1_ratio,
+        h3_views=video.h3_views,
+        h3_ratio=video.h3_ratio,
+        h6_views=video.h6_views,
+        h6_ratio=video.h6_ratio,
     )
 
 

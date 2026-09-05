@@ -171,6 +171,37 @@ def test_metric_default_is_average(client, db_session):
     assert body["overperformCount"] == 2
 
 
+def test_velocity_checkpoints_are_exposed_when_present(client, db_session):
+    # See app/velocity.py — v1 gets seeded with a captured 1h checkpoint but
+    # no 3h/6h yet (still open or genuinely missed, either way not null-vs-
+    # captured is the frontend's problem to render, not this endpoint's).
+    _seed(db_session)
+    video = db_session.get(Video, "v1")
+    video.h1_views = 5000
+    video.h1_ratio = 4.2
+    db_session.commit()
+
+    body = client.get("/api/videos").json()
+    v1 = next(v for v in body["videos"] if v["id"] == "v1")
+    assert v1["h1Views"] == 5000
+    assert v1["h1Ratio"] == 4.2
+    assert v1["h3Views"] is None
+    assert v1["h3Ratio"] is None
+    assert v1["h6Views"] is None
+    assert v1["h6Ratio"] is None
+
+
+def test_velocity_checkpoints_default_to_null(client, db_session):
+    # Every other seeded video never got a velocity check at all — the
+    # common case for anything scraped before this feature shipped, or any
+    # Instagram video (velocity is YouTube-only, see app/velocity.py).
+    _seed(db_session)
+    body = client.get("/api/videos").json()
+    v3 = next(v for v in body["videos"] if v["id"] == "v3")  # instagram
+    for key in ("h1Views", "h1Ratio", "h3Views", "h3Ratio", "h6Views", "h6Ratio"):
+        assert v3[key] is None
+
+
 def test_metric_median_changes_overperform_count_and_sort(client, db_session):
     _seed(db_session)
     body = client.get("/api/videos", params={"metric": "median"}).json()

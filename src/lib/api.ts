@@ -70,6 +70,17 @@ export interface ApiVideo {
   // data source scraped for it.
   hasSponsorSegment: boolean;
   sponsorSegmentSeconds: number | null;
+  // Early-velocity checkpoints (see backend/app/velocity.py) — YouTube-only,
+  // and only populated going forward from whenever that feature shipped, so
+  // most videos report null/null for all three. Each pair is null until
+  // that checkpoint either lands within its grace window or permanently
+  // misses it — render "—", not 0.
+  h1Views: number | null;
+  h1Ratio: number | null;
+  h3Views: number | null;
+  h3Ratio: number | null;
+  h6Views: number | null;
+  h6Ratio: number | null;
 }
 
 export interface VideoQuery {

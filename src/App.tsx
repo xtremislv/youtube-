@@ -239,6 +239,16 @@ function PlusIcon({ size = 12 }: { size?: number }) {
   );
 }
 
+function ClockIcon({ size = 12 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="9" />
+      <polyline points="12 7 12 12 15.5 14" />
+    </svg>
+  );
+}
+
+
 function RefreshIcon({ size = 14 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -978,6 +988,18 @@ function overlayRatioColor(ratio: number | null): string {
   return "#fb923c";
 }
 
+// Same thresholds as VideoCard's overColor below, factored out so
+// ChannelStatCard's velocity checkpoint panel reads identically to the
+// grid's own overperform coloring — a video's 1h/3h/6h ratio and its
+// eventual lifetime ratio should never look like two different scales.
+function velocityRatioColor(ratio: number | null | undefined): string {
+  if (ratio == null) return "var(--text-muted)";
+  if (ratio < 1) return "var(--tier-danger)";
+  if (ratio >= 3) return "var(--success)";
+  if (ratio >= 2) return "var(--warning)";
+  return "var(--tier-orange)";
+}
+
 function VideoCard({ video, mode, metric = "average" }: { video: Video; mode: ViewMode; metric?: OverperformMetric }) {
   const ratio = metric === "median" ? video.overperformRatioMedian : video.overperformRatio;
   // Used for anything drawn directly on the card's own (theme-adaptive)
@@ -1300,20 +1322,93 @@ function ChannelCard({ channel: c, onToggleActive, onRemove }: { channel: Channe
 // since picking one channel out of a strip you're already looking at is
 // faster than opening a dropdown and finding it in a list.
 
+// Fixed widths the expand/collapse transition animates between — a CSS
+// transition needs concrete numbers on both ends, "auto" doesn't animate.
+const CHANNEL_CARD_WIDTH = 216;
+const VELOCITY_PANEL_WIDTH = 300;
+
 function ChannelStatCard({ channel: c, active, onClick, onClear }: { channel: Channel; active: boolean; onClick: () => void; onClear: () => void }) {
+  // Selecting a channel (the existing click-to-filter behavior below is
+  // unchanged) is also what expands it — "active" already means "the one
+  // channel currently singled out", so reusing it here needs no new
+  // selection state, and the existing clear ("X") button above already
+  // doubles as the close action: clearing the filter un-singles the
+  // channel, which collapses it right back.
+  const [velocityVideos, setVelocityVideos] = useState<Video[] | null>(null);
+  const [velocityLoading, setVelocityLoading] = useState(false);
+  // Delays the panel's own fade-in slightly past when its width starts
+  // opening, so content doesn't pop in mid-slide — collapses instantly
+  // instead (nothing to see once the panel's shrinking anyway).
+  const [showVelocityContent, setShowVelocityContent] = useState(false);
+
+  const isYouTube = c.platform === "youtube";
+
+  useEffect(() => {
+    if (!active) {
+      setShowVelocityContent(false);
+      return;
+    }
+    if (!isYouTube) {
+      // No fetch needed for Instagram — the panel just fades in its static
+      // "YouTube-only" message on the same delay as the real data case
+      // below, so both platforms feel like the same interaction.
+      setShowVelocityContent(false);
+      const t = window.setTimeout(() => setShowVelocityContent(true), 140);
+      return () => window.clearTimeout(t);
+    }
+    let cancelled = false;
+    setVelocityLoading(true);
+    setShowVelocityContent(false);
+    // A dedicated fetch, independent of the main grid's own filters/paging
+    // (see the Filters state in App()) — this channel's most recent
+    // uploads regardless of what date range or platform the rest of the
+    // dashboard currently has selected, since early-velocity only ever
+    // matters for a channel's newest videos.
+    fetchVideos({
+      platform: "all",
+      channels: [c.id],
+      dateFrom: "",
+      dateTo: "",
+      viewsThreshold: "",
+      format: "all",
+      sortBy: "date",
+      limit: 6,
+    })
+      .then(result => {
+        if (cancelled) return;
+        setVelocityVideos(result.videos);
+        setVelocityLoading(false);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setVelocityVideos([]);
+        setVelocityLoading(false);
+      });
+    const showTimer = window.setTimeout(() => !cancelled && setShowVelocityContent(true), 140);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(showTimer);
+    };
+  }, [active, isYouTube, c.id]);
+
+  const hasAnyCheckpoint = (velocityVideos ?? []).some(
+    v => v.h1Views != null || v.h3Views != null || v.h6Views != null,
+  );
+
   return (
     <div
-      className="video-card group relative flex flex-col gap-2 p-3 shrink-0"
+      className="video-card group relative flex shrink-0"
       style={{
-        width: 216,
+        width: active ? CHANNEL_CARD_WIDTH + VELOCITY_PANEL_WIDTH : CHANNEL_CARD_WIDTH,
         cursor: "pointer",
         borderColor: active ? "var(--accent)" : undefined,
         boxShadow: active ? "0 0 0 1px var(--accent)" : undefined,
+        transition: "width 0.28s cubic-bezier(0.4, 0, 0.2, 1), border-color 0.18s, box-shadow 0.18s",
       }}
       onClick={onClick}
       role="button"
       tabIndex={0}
-      title={active ? `Showing only ${c.name} — pick another channel or clear in the filter bar to change` : `Show only videos from ${c.name}`}
+      title={active ? `Showing only ${c.name} — pick another channel or clear to change` : `Show only videos from ${c.name}, and see its early-velocity checkpoints`}
       onKeyDown={e => {
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
@@ -1323,48 +1418,119 @@ function ChannelStatCard({ channel: c, active, onClick, onClear }: { channel: Ch
     >
       {/* Clears this channel back out of the filter — translucent and
           barely visible at rest so it doesn't clutter the card, fully
-          opaque on hover so it's easy to hit once you're going for it. */}
+          opaque on hover so it's easy to hit once you're going for it.
+          Also this card's "close" action: clearing collapses it. */}
       <button
         onClick={e => { e.stopPropagation(); onClear(); }}
-        title={`Clear ${c.name} filter`}
-        aria-label={`Clear ${c.name} filter`}
-        className="absolute top-1.5 right-1.5 flex items-center justify-center rounded-full opacity-20 group-hover:opacity-100 hover:!opacity-100 transition-opacity"
+        title={active ? `Close ${c.name}'s velocity panel` : `Clear ${c.name} filter`}
+        aria-label={active ? `Close ${c.name}'s velocity panel` : `Clear ${c.name} filter`}
+        className="absolute top-1.5 right-1.5 flex items-center justify-center rounded-full opacity-20 group-hover:opacity-100 hover:!opacity-100 transition-opacity z-10"
         style={{ width: 18, height: 18, background: "rgba(10,12,18,0.85)", color: "var(--text-secondary)" }}
       >
         <XIcon size={8} />
       </button>
-      <div className="flex items-center gap-2">
-        <div className="flex items-center justify-center rounded-full size-8 shrink-0 text-[11px] font-bold" style={{ background: "var(--bg-elevated)", color: "var(--accent-light)" }}>
-          {c.avatarUrl ? <img src={c.avatarUrl} alt={c.name} className="size-8 rounded-full object-cover" /> : c.avatar}
+
+      {/* Left: original compact stats — unchanged in content, now just the
+          fixed-width left column of a two-column card when expanded. */}
+      <div className="flex flex-col gap-2 p-3 shrink-0" style={{ width: CHANNEL_CARD_WIDTH }}>
+        <div className="flex items-center gap-2">
+          <div className="flex items-center justify-center rounded-full size-8 shrink-0 text-[11px] font-bold" style={{ background: "var(--bg-elevated)", color: "var(--accent-light)" }}>
+            {c.avatarUrl ? <img src={c.avatarUrl} alt={c.name} className="size-8 rounded-full object-cover" /> : c.avatar}
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="text-xs font-semibold truncate pr-4" style={{ color: "var(--text-primary)", fontFamily: "Lora, serif" }}>{c.name}</div>
+            <div className="flex items-center gap-1.5 mt-0.5">
+              <span className={`text-[9px] px-1 rounded ${c.platform === "youtube" ? "badge-yt" : "badge-ig"}`}>{c.platform === "youtube" ? "YT" : "IG"}</span>
+              {c.cohort && <span className="filter-chip" style={{ fontSize: 9, padding: "1px 5px" }}>{c.cohort}</span>}
+            </div>
+          </div>
         </div>
-        <div className="flex-1 min-w-0">
-          <div className="text-xs font-semibold truncate pr-4" style={{ color: "var(--text-primary)", fontFamily: "Lora, serif" }}>{c.name}</div>
-          <div className="flex items-center gap-1.5 mt-0.5">
-            <span className={`text-[9px] px-1 rounded ${c.platform === "youtube" ? "badge-yt" : "badge-ig"}`}>{c.platform === "youtube" ? "YT" : "IG"}</span>
-            {c.cohort && <span className="filter-chip" style={{ fontSize: 9, padding: "1px 5px" }}>{c.cohort}</span>}
+        <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 pt-1.5" style={{ borderTop: "1px solid var(--border)" }}>
+          <div>
+            <div className="text-[9px]" style={{ color: "var(--text-muted)" }}>Subscribers</div>
+            <div className="text-xs font-bold font-mono" style={{ color: "var(--text-primary)" }}>{c.subs}</div>
+          </div>
+          <div>
+            <div className="text-[9px]" style={{ color: "var(--text-muted)" }}>Avg views</div>
+            <div className="text-xs font-bold font-mono" style={{ color: "var(--text-primary)" }}>{fmtViewsN(c.avgViews)}</div>
+          </div>
+          <div>
+            <div className="text-[9px]" style={{ color: "var(--text-muted)" }}>Median (last 10)</div>
+            <div className="text-xs font-bold font-mono" style={{ color: "var(--text-primary)" }}>{fmtViewsN(c.medianViewsLast10)}</div>
+          </div>
+          <div>
+            <div className="text-[9px]" style={{ color: "var(--text-muted)" }}>Tracked</div>
+            <div className="text-xs font-mono" style={{ color: "var(--text-muted)" }}>{c.videoCount} vid{c.videoCount === 1 ? "" : "s"}</div>
+          </div>
+          <div className="col-span-2">
+            <div className="text-[9px]" style={{ color: "var(--text-muted)" }}>Last pub.</div>
+            <div className="text-xs font-mono" style={{ color: "var(--text-muted)" }}>{c.lastPublishedAt ? fmtDate(c.lastPublishedAt) : "—"}</div>
           </div>
         </div>
       </div>
-      <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 pt-1.5" style={{ borderTop: "1px solid var(--border)" }}>
-        <div>
-          <div className="text-[9px]" style={{ color: "var(--text-muted)" }}>Subscribers</div>
-          <div className="text-xs font-bold font-mono" style={{ color: "var(--text-primary)" }}>{c.subs}</div>
-        </div>
-        <div>
-          <div className="text-[9px]" style={{ color: "var(--text-muted)" }}>Avg views</div>
-          <div className="text-xs font-bold font-mono" style={{ color: "var(--text-primary)" }}>{fmtViewsN(c.avgViews)}</div>
-        </div>
-        <div>
-          <div className="text-[9px]" style={{ color: "var(--text-muted)" }}>Median (last 10)</div>
-          <div className="text-xs font-bold font-mono" style={{ color: "var(--text-primary)" }}>{fmtViewsN(c.medianViewsLast10)}</div>
-        </div>
-        <div>
-          <div className="text-[9px]" style={{ color: "var(--text-muted)" }}>Tracked</div>
-          <div className="text-xs font-mono" style={{ color: "var(--text-muted)" }}>{c.videoCount} vid{c.videoCount === 1 ? "" : "s"}</div>
-        </div>
-        <div className="col-span-2">
-          <div className="text-[9px]" style={{ color: "var(--text-muted)" }}>Last pub.</div>
-          <div className="text-xs font-mono" style={{ color: "var(--text-muted)" }}>{c.lastPublishedAt ? fmtDate(c.lastPublishedAt) : "—"}</div>
+
+      {/* Right: early-velocity panel — width animates 0 -> VELOCITY_PANEL_WIDTH
+          in lockstep with the outer card, content fades in slightly after
+          (see showVelocityContent above) so it never looks like it's being
+          squeezed into place mid-slide. Always rendered (never unmounted)
+          so the collapse has something to animate back down to 0 from. */}
+      <div
+        className="shrink-0 overflow-hidden"
+        style={{
+          width: active ? VELOCITY_PANEL_WIDTH : 0,
+          transition: "width 0.28s cubic-bezier(0.4, 0, 0.2, 1)",
+          borderLeft: active ? "1px solid var(--border)" : "1px solid transparent",
+        }}
+      >
+        <div className="flex flex-col gap-2 p-3 h-full" style={{ width: VELOCITY_PANEL_WIDTH, opacity: showVelocityContent ? 1 : 0, transition: "opacity 0.22s ease" }}>
+          <div className="flex items-center gap-1.5" style={{ color: "var(--accent-light)" }}>
+            <ClockIcon size={11} />
+            <span className="text-[10px] font-bold uppercase tracking-wide">Early Velocity</span>
+          </div>
+
+          {!isYouTube ? (
+            <p className="text-[11px] leading-snug pt-1" style={{ color: "var(--text-muted)" }}>
+              Velocity tracking is YouTube-only — there's no equivalent checkpoint data for Instagram.
+            </p>
+          ) : velocityLoading ? (
+            <p className="text-[11px] pt-1" style={{ color: "var(--text-muted)" }}>Loading…</p>
+          ) : !hasAnyCheckpoint ? (
+            <p className="text-[11px] leading-snug pt-1" style={{ color: "var(--text-muted)" }}>
+              No checkpoints yet — they'll appear automatically as this channel's new uploads cross their 1h, 3h and 6h marks.
+            </p>
+          ) : (
+            <div className="flex flex-col gap-2 overflow-y-auto pr-0.5" style={{ maxHeight: 260 }}>
+              {(velocityVideos ?? [])
+                .filter(v => v.h1Views != null || v.h3Views != null || v.h6Views != null)
+                .map(v => (
+                  <div key={v.id} className="rounded-lg p-2" style={{ background: "var(--bg-elevated)" }}>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[11px] font-semibold truncate" style={{ color: "var(--text-primary)" }} title={v.title}>{v.title}</span>
+                      <span className="text-[9px] font-mono shrink-0" style={{ color: "var(--text-muted)" }}>{fmtDate(v.publishedAt)}</span>
+                    </div>
+                    <div className="grid grid-cols-3 gap-1.5 mt-1.5">
+                      {([
+                        { label: "1h", views: v.h1Views, ratio: v.h1Ratio },
+                        { label: "3h", views: v.h3Views, ratio: v.h3Ratio },
+                        { label: "6h", views: v.h6Views, ratio: v.h6Ratio },
+                      ] as const).map(cp => (
+                        <div key={cp.label} className="flex flex-col items-center gap-0.5 rounded-md py-1.5" style={{ background: "var(--bg-card)" }}>
+                          <span className="text-[8px] uppercase tracking-wide font-semibold" style={{ color: "var(--text-muted)" }}>{cp.label}</span>
+                          <span className="text-[11px] font-mono font-bold" style={{ color: cp.views == null ? "var(--text-muted)" : "var(--text-primary)" }}>
+                            {cp.views == null ? "—" : fmtViewsN(cp.views)}
+                          </span>
+                          {cp.ratio != null && (
+                            <span className="text-[9px] font-mono font-bold" style={{ color: velocityRatioColor(cp.ratio) }}>
+                              {fmtRatio(cp.ratio)}
+                            </span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+            </div>
+          )}
         </div>
       </div>
     </div>
