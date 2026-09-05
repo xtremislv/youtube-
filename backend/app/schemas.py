@@ -43,6 +43,14 @@ class ChannelOut(CamelModel):
     # Channel row). All three are None/0 for a brand-new channel that hasn't
     # been scraped yet. Backs the Competitor Roster's channel card.
     avg_views: int | None = None
+    # Median views across this channel's 10 most recently published videos
+    # (any platform — YouTube or Instagram) — computed in Python in
+    # app/routers/channels.py rather than SQL, since it needs a per-channel
+    # "last N" window + a median, and staying in Python keeps it identical
+    # under SQLite (tests) and Postgres (prod) without relying on
+    # percentile_cont/window-function support differing between the two.
+    # None until the channel has at least one scraped video.
+    median_views_last_10: int | None = None
     video_count: int = 0
     last_published_at: str | None = None  # "YYYY-MM-DD", most recent video
 

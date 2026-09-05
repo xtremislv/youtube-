@@ -55,6 +55,39 @@ def test_channel_card_stats_computed_from_videos(client, db_session):
     assert body["avgViews"] == 2000
     assert body["videoCount"] == 2
     assert body["lastPublishedAt"] == "2026-08-20"
+    # only 2 videos exist, so the "last 10" window is just those 2
+    assert body["medianViewsLast10"] == 2000
+
+
+def test_median_views_last_10_uses_only_the_most_recent_ten(client, db_session):
+    """A channel with more than 10 videos should have its median computed
+    from only its 10 most recently published ones, ignoring older history —
+    mirrors the trailing-window idea in app/overperformance.py, but as a
+    simple per-channel roster stat rather than a per-video baseline."""
+    created = client.post("/api/channels", json={"platform": "instagram", "handle": "creator"}).json()
+    channel_id = created["id"]
+    # 5 old videos at 100 views (should be excluded from the window) + 10
+    # recent videos at 1000, 2000, ..., 10000 views (median = 5500).
+    videos = [
+        Video(
+            id=f"old{i}", channel_id=channel_id, platform="instagram", title=f"Old {i}",
+            views=100, published_at=dt.date(2026, 1, 1) + dt.timedelta(days=i), duration_seconds=30, format="reel",
+        )
+        for i in range(5)
+    ]
+    videos += [
+        Video(
+            id=f"new{i}", channel_id=channel_id, platform="instagram", title=f"New {i}",
+            views=(i + 1) * 1000, published_at=dt.date(2026, 8, 1) + dt.timedelta(days=i), duration_seconds=30, format="reel",
+        )
+        for i in range(10)
+    ]
+    db_session.add_all(videos)
+    db_session.commit()
+
+    body = client.get("/api/channels").json()[0]
+    assert body["medianViewsLast10"] == 5500
+    assert body["videoCount"] == 15  # avgViews/videoCount still reflect all-time history
 
 
 def test_create_instagram_channel_normalizes_handle(client):

@@ -36,6 +36,11 @@ export interface ApiChannel {
   // backend/app/schemas.py) — null/0 until the channel has been scraped
   // at least once. Backs the Competitor Roster's channel card.
   avgViews: number | null;
+  // Median views across the channel's 10 most recently published videos
+  // (YouTube or Instagram alike) — a separate, more outlier-resistant stat
+  // from avgViews above, which is a plain mean over the channel's entire
+  // history. Backs the "Median (last 10)" line on the channel card.
+  medianViewsLast10: number | null;
   videoCount: number;
   lastPublishedAt: string | null; // "YYYY-MM-DD"
 }

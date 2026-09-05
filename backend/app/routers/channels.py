@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
+import statistics
+from collections import defaultdict
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func
@@ -33,11 +35,36 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/channels", tags=["channels"])
 
 
+def _median_views_last_10_by_channel(db: Session) -> dict[str, float]:
+    """One channel -> median `views` of that channel's 10 most recently
+    published videos (platform-agnostic — works the same for a YouTube
+    channel or an Instagram profile, since it only looks at published_at
+    and views). Backs the channel card's "Median (last 10)" stat.
+
+    Done in Python rather than a single SQL aggregate: getting "the last 10
+    rows per group" needs a ROW_NUMBER()-style window, and a median needs
+    percentile_cont — support/behavior for both differs between the
+    Postgres this runs against in prod and the SQLite the test suite uses,
+    so pulling the (channel_id, views, published_at) rows and doing the
+    windowing + median in Python keeps this identical on both.
+    """
+    rows = db.query(Video.channel_id, Video.views, Video.published_at).order_by(
+        Video.channel_id, Video.published_at.desc()
+    ).all()
+    by_channel: dict[str, list[int]] = defaultdict(list)
+    for channel_id, views, _published_at in rows:
+        bucket = by_channel[channel_id]
+        if len(bucket) < 10:
+            bucket.append(views)
+    return {channel_id: statistics.median(views_list) for channel_id, views_list in by_channel.items() if views_list}
+
+
 def _to_out(
     channel: Channel,
     avg_views: float | None = None,
     video_count: int = 0,
     last_published_at: dt.date | None = None,
+    median_views_last_10: float | None = None,
 ) -> ChannelOut:
     return ChannelOut(
         id=channel.id,
@@ -51,6 +78,7 @@ def _to_out(
         cohort=channel.cohort,
         is_active=channel.is_active,
         avg_views=round(avg_views) if avg_views is not None else None,
+        median_views_last_10=round(median_views_last_10) if median_views_last_10 is not None else None,
         video_count=video_count or 0,
         last_published_at=last_published_at.isoformat() if last_published_at else None,
     )
@@ -85,8 +113,15 @@ def list_channels(
     if not include_inactive:
         query = query.filter(Channel.is_active.is_(True))
     rows = query.order_by(Channel.name).all()
+    median_last_10 = _median_views_last_10_by_channel(db)
     return [
-        _to_out(channel, avg_views=avg_views, video_count=video_count, last_published_at=last_published_at)
+        _to_out(
+            channel,
+            avg_views=avg_views,
+            video_count=video_count,
+            last_published_at=last_published_at,
+            median_views_last_10=median_last_10.get(channel.id),
+        )
         for channel, avg_views, video_count, last_published_at in rows
     ]
 
