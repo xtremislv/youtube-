@@ -414,7 +414,7 @@ function Sidebar({
 }: SidebarProps) {
   const navLinks = [
     { label: "Overperformance", icon: "chart", badge: overperformBadge },
-    { label: "Search", icon: "trend", badge: null as number | null },
+    { label: "Trend Analysis", icon: "trend", badge: null as number | null },
     { label: "Add Channel", icon: "people", badge: null as number | null },
   ];
 
@@ -1586,14 +1586,7 @@ function TopicSearchView({ quotaBudget, quotaUsedToday }: { quotaBudget: number 
   return (
     <div className="flex-1 overflow-y-auto p-5">
       <div className="flex flex-col gap-1 mb-6">
-        <div className="text-sm font-semibold" style={{ color: "var(--text-primary)", fontFamily: "Lora, serif" }}>
-          Is this topic trending?
-        </div>
-        <div className="text-xs max-w-2xl" style={{ color: "var(--text-muted)" }}>
-          Searches YouTube (India, last 60 days), ranks channels with 500K+ subscribers by view velocity
-          (views per subscriber per day since publish), and checks the top 10 against their own upload history.
-        </div>
-        <form onSubmit={handleSearch} className="flex items-center gap-2 mt-3 max-w-xl">
+        <form onSubmit={handleSearch} className="flex items-center gap-2 max-w-xl">
           <input
             value={query}
             onChange={e => setQuery(e.target.value)}
@@ -2121,7 +2114,7 @@ export default function App() {
           <div className="flex-1 overflow-y-auto">
             <CompetitorRoster channels={channels} onChanged={refreshChannelsAndCohorts} />
           </div>
-        ) : activeSection === "Search" ? (
+        ) : activeSection === "Trend Analysis" ? (
           <TopicSearchView
             quotaBudget={systemStatus?.youtubeQuotaBudget ?? null}
             quotaUsedToday={systemStatus?.youtubeQuotaUsedToday ?? null}
