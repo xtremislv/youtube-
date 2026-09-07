@@ -222,3 +222,79 @@ class WorkspaceSettings(Base):
     updated_at: Mapped[dt.datetime] = mapped_column(
         DateTime(timezone=True), default=dt.datetime.utcnow, onupdate=dt.datetime.utcnow
     )
+
+
+class TopicSearchCache(Base):
+    """Always exactly one row, with id=1 — the latest topic search's
+    summary. See app/topic_search.py's module docstring for the full
+    design: this is deliberately a single overwritten slot, not a history
+    table. Every new search deletes and replaces this row (and every
+    TopicSearchCacheChannel row) inside one transaction, so exactly one
+    query's data ever exists at a time. Its only job is to survive a page
+    reload — repeating the same query still re-searches YouTube fresh
+    rather than reusing this."""
+
+    __tablename__ = "topic_search_cache"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    query: Mapped[str] = mapped_column(String(200), nullable=False)
+    searched_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    # The settings this particular search ran with — recorded per-search
+    # (rather than always trusting current config) so the numbers shown
+    # stay self-consistent even if an env var changes later.
+    lookback_days: Mapped[int] = mapped_column(Integer, nullable=False)
+    min_subscribers: Mapped[int] = mapped_column(Integer, nullable=False)
+    region_code: Mapped[str] = mapped_column(String(8), nullable=False)
+    top_n: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    # How many videos survived the date filter + subscriber gate — the
+    # population ranking was chosen from (before dedup to top_n channels).
+    total_candidates: Mapped[int] = mapped_column(Integer, nullable=False)
+    # Of the top_n selected channels, how many are "outperforming" (see
+    # TopicSearchCacheChannel.is_outperforming) — the headline "X of N"
+    # hype readout.
+    outperform_count: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    youtube_quota_units_used: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+
+class TopicSearchCacheChannel(Base):
+    """Up to `top_n` rows (rank 1..top_n) backing the current
+    TopicSearchCache row's channel/video snapshot. Fully replaced on every
+    new search — never accumulates history, per the module's single-slot
+    caching design."""
+
+    __tablename__ = "topic_search_cache_channels"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    rank: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    channel_external_id: Mapped[str] = mapped_column(String, nullable=False)
+    channel_name: Mapped[str] = mapped_column(String, nullable=False)
+    channel_handle: Mapped[str | None] = mapped_column(String, nullable=True)
+    channel_avatar_url: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Subscriber count at the time of this search — a snapshot, not a live
+    # tracked value (this channel isn't necessarily one we track at all).
+    subscriber_count: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    video_external_id: Mapped[str] = mapped_column(String, nullable=False)
+    video_title: Mapped[str] = mapped_column(String, nullable=False)
+    video_thumbnail_url: Mapped[str | None] = mapped_column(String, nullable=True)
+    video_url: Mapped[str] = mapped_column(String, nullable=False)
+    video_views: Mapped[int] = mapped_column(Integer, nullable=False)
+    video_published_at: Mapped[dt.date] = mapped_column(Date, nullable=False)
+
+    # The (views / subscribers) / days_since_published ranking score that
+    # put this channel at this rank — see topic_search.score_candidate().
+    rank_score: Mapped[float] = mapped_column(Float, nullable=False)
+
+    # This channel's median views over its other recent uploads (the
+    # candidate video itself excluded — see topic_search.py), and this
+    # video's ratio against that median. Both null if the channel had no
+    # other recent uploads to compare against.
+    channel_median_views: Mapped[float | None] = mapped_column(Float, nullable=True)
+    overperform_ratio: Mapped[float | None] = mapped_column(Float, nullable=True)
+    is_outperforming: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+    __table_args__ = (Index("ix_topic_search_cache_channels_rank", "rank"),)

@@ -100,6 +100,38 @@ class Settings(BaseSettings):
     # by-then-stale data — an honest "missed" beats a misleading number.
     velocity_checkpoint_grace_hours: float = 2.0
 
+    # Topic search / "is this trending" (see app/topic_search.py) — a
+    # user-triggered YouTube search.list lookup, deliberately kept out of
+    # the tracked-channel pipeline entirely. Results are never stored in
+    # bulk: only a single-slot cache (latest query's summary + its top
+    # channels) persists — see TopicSearchCache/TopicSearchCacheChannel in
+    # app/models.py.
+    #
+    # How many days back a video must have been published to be considered
+    # at all.
+    search_lookback_days: int = 60
+    # A channel below this subscriber count is excluded before ranking
+    # even starts — keeps a random small channel's lucky video from
+    # dominating the "is this topic trending" read.
+    search_min_subscribers: int = 500_000
+    # How many distinct top-ranked channels get the (more expensive)
+    # channel-median comparison.
+    search_top_n_channels: int = 10
+    # search.list's regionCode — which country's YouTube trends/results to
+    # search against.
+    search_region_code: str = "IN"
+    # How many raw search.list results to pull before filtering/ranking —
+    # capped at YouTube's own per-page max of 50. Each extra page is
+    # another full search.list call (100 units), so this is a deliberate
+    # cost/depth tradeoff, not just a display limit.
+    search_max_results: int = 50
+    # Cooldown (seconds) between topic searches — much shorter than the
+    # full scrape's cooldown since this is a deliberate, one-topic-at-a-
+    # time user action, but still real quota spend (~100-150 units/search,
+    # dominated by the single search.list call) that repeated accidental
+    # clicks shouldn't be able to multiply for free.
+    topic_search_cooldown_seconds: int = 60
+
     @property
     def cors_origin_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]

@@ -266,4 +266,74 @@ export function setInstagramScrapingEnabled(enabled: boolean): Promise<ScraperSe
   });
 }
 
+/**
+ * Topic search / "is this trending" (see backend/app/topic_search.py) — a
+ * user-triggered YouTube search, kept deliberately separate from the
+ * tracked-channel Channel/Video data above. Only a single-slot cache
+ * persists server-side (the latest query's summary + its top channels);
+ * repeating the same query still re-searches YouTube fresh rather than
+ * reusing it, since "is this trending right now" goes stale by definition
+ * — the cache's only job is to survive a page reload.
+ */
+export interface TopicSearchChannelResult {
+  rank: number;
+  channelId: string;
+  channelName: string;
+  channelHandle: string | null;
+  channelAvatarUrl: string | null;
+  subscriberCount: number;
+  videoId: string;
+  videoTitle: string;
+  videoThumbnailUrl: string | null;
+  videoUrl: string;
+  videoViews: number;
+  videoPublishedAt: string; // "YYYY-MM-DD"
+  // (views / subscribers) / days-since-published — see topic_search.py's
+  // score_candidate() for why both channel size and video age are
+  // normalized out.
+  score: number;
+  // This channel's median views over its *other* recent uploads, and this
+  // video's ratio against that median — both null if the channel had no
+  // other recent uploads to compare against.
+  channelMedianViews: number | null;
+  overperformRatio: number | null;
+  isOutperforming: boolean;
+}
+
+export interface TopicSearchResult {
+  query: string;
+  searchedAt: string;
+  lookbackDays: number;
+  minSubscribers: number;
+  regionCode: string;
+  topN: number;
+  // How many videos survived the date filter + subscriber gate — the
+  // population `channels` was ranked out of.
+  totalCandidates: number;
+  // Of `channels` (already capped at topN), how many are outperforming
+  // their own channel's median — the headline "X of N" hype readout.
+  outperformCount: number;
+  youtubeQuotaUnitsUsed: number;
+  channels: TopicSearchChannelResult[];
+}
+
+/** GET /api/search/latest — the page-reload path. Never spends quota; returns
+ * null if no search has ever run. */
+export function fetchLatestTopicSearch(): Promise<TopicSearchResult | null> {
+  return request<TopicSearchResult | null>("/api/search/latest");
+}
+
+/**
+ * POST /api/search/topic — runs a fresh search against YouTube right now.
+ * Real quota spend; expect an ApiError (429 cooldown/budget, 502 upstream
+ * failure, 503 not configured) rather than treating every rejection as
+ * unexpected — see backend/app/routers/search.py.
+ */
+export function searchTopic(query: string): Promise<TopicSearchResult> {
+  return request<TopicSearchResult>("/api/search/topic", {
+    method: "POST",
+    body: JSON.stringify({ query }),
+  });
+}
+
 export { ApiError };

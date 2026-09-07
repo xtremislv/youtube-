@@ -11,6 +11,8 @@ import {
   deleteChannel,
   updateChannel,
   triggerManualScrape,
+  fetchLatestTopicSearch,
+  searchTopic,
   ApiError,
   type ApiChannel as Channel,
   type ApiVideo as Video,
@@ -18,6 +20,8 @@ import {
   type SystemStatus,
   type ScraperSettings,
   type OverperformMetric,
+  type TopicSearchResult,
+  type TopicSearchChannelResult,
 } from "@/lib/api";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -410,6 +414,7 @@ function Sidebar({
 }: SidebarProps) {
   const navLinks = [
     { label: "Overperformance", icon: "chart", badge: overperformBadge },
+    { label: "Search", icon: "trend", badge: null as number | null },
     { label: "Add Channel", icon: "people", badge: null as number | null },
   ];
 
@@ -1537,6 +1542,213 @@ function ChannelStatCard({ channel: c, active, onClick, onClear }: { channel: Ch
   );
 }
 
+// ─── Topic Search ("is this trending") ─────────────────────────────────────
+// A user-triggered YouTube search, entirely separate from the tracked-
+// channel data everywhere else in this file — see backend/app/topic_search.py
+// for the full method. Only the latest query's result is ever cached
+// server-side (GET /api/search/latest survives a page reload without
+// spending quota; POST /api/search/topic runs a fresh, real search and
+// overwrites it), so this view's own state just mirrors whatever that
+// endpoint currently holds rather than accumulating any history itself.
+
+function TopicSearchView({ quotaBudget, quotaUsedToday }: { quotaBudget: number | null; quotaUsedToday: number | null }) {
+  const [query, setQuery] = useState("");
+  const [result, setResult] = useState<TopicSearchResult | null>(null);
+  const [initialLoading, setInitialLoading] = useState(true);
+  const [searching, setSearching] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetchLatestTopicSearch()
+      .then(setResult)
+      .catch(() => {})
+      .finally(() => setInitialLoading(false));
+  }, []);
+
+  const handleSearch = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const trimmed = query.trim();
+    if (!trimmed || searching) return;
+    setSearching(true);
+    setError(null);
+    try {
+      setResult(await searchTopic(trimmed));
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Something went wrong — please try again.");
+    } finally {
+      setSearching(false);
+    }
+  };
+
+  const remainingQuota = quotaBudget != null && quotaUsedToday != null ? Math.max(0, quotaBudget - quotaUsedToday) : null;
+  const searchDisabled = searching || !query.trim();
+
+  return (
+    <div className="flex-1 overflow-y-auto p-5">
+      <div className="flex flex-col gap-1 mb-6">
+        <div className="text-sm font-semibold" style={{ color: "var(--text-primary)", fontFamily: "Lora, serif" }}>
+          Is this topic trending?
+        </div>
+        <div className="text-xs max-w-2xl" style={{ color: "var(--text-muted)" }}>
+          Searches YouTube (India, last 60 days), ranks channels with 500K+ subscribers by view velocity
+          (views per subscriber per day since publish), and checks the top 10 against their own upload history.
+        </div>
+        <form onSubmit={handleSearch} className="flex items-center gap-2 mt-3 max-w-xl">
+          <input
+            value={query}
+            onChange={e => setQuery(e.target.value)}
+            placeholder="e.g. iPhone 17 review"
+            className="flex-1 px-3 py-2 rounded-lg text-sm"
+            style={{ background: "var(--bg-elevated)", border: "1px solid var(--border)", color: "var(--text-primary)" }}
+          />
+          <button
+            type="submit"
+            disabled={searchDisabled}
+            className="px-4 py-2 rounded-lg text-sm font-semibold transition-colors shrink-0"
+            style={{
+              background: searchDisabled ? "var(--bg-elevated)" : "var(--accent)",
+              color: searchDisabled ? "var(--text-muted)" : "var(--on-accent)",
+              cursor: searchDisabled ? "not-allowed" : "pointer",
+            }}
+          >
+            {searching ? "Searching…" : "Search"}
+          </button>
+        </form>
+        {remainingQuota != null && (
+          <div className="text-[10px] mt-1" style={{ color: "var(--text-muted)" }}>
+            ~120 quota units per search · ~{remainingQuota.toLocaleString()} left in today's budget
+          </div>
+        )}
+        {error && (
+          <div
+            className="text-xs mt-2 px-3 py-2 rounded-lg max-w-xl"
+            style={{ background: "rgba(248,113,113,0.1)", color: "var(--tier-danger)", border: "1px solid var(--tier-danger)" }}
+          >
+            {error}
+          </div>
+        )}
+      </div>
+
+      {initialLoading ? (
+        <div className="flex flex-col items-center justify-center h-48" style={{ color: "var(--text-muted)" }}>
+          <div className="text-sm" style={{ fontFamily: "Lora, serif" }}>Loading last search…</div>
+        </div>
+      ) : searching ? (
+        <div className="flex flex-col items-center justify-center h-48" style={{ color: "var(--text-muted)" }}>
+          <div className="text-sm" style={{ fontFamily: "Lora, serif" }}>Searching YouTube and checking channel history…</div>
+        </div>
+      ) : !result ? (
+        <div className="flex flex-col items-center justify-center h-48" style={{ color: "var(--text-muted)" }}>
+          <div className="text-4xl mb-3">🔍</div>
+          <div className="text-sm" style={{ fontFamily: "Lora, serif" }}>No searches yet</div>
+          <div className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>Try a topic above to see how it's performing on YouTube right now.</div>
+        </div>
+      ) : (
+        <TopicSearchResults result={result} />
+      )}
+    </div>
+  );
+}
+
+function TopicSearchResults({ result }: { result: TopicSearchResult }) {
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="flex flex-wrap items-center gap-4 p-4 rounded-xl" style={{ background: "var(--bg-card)", border: "1px solid var(--border)" }}>
+        <div>
+          <div className="text-[9px] uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>Topic</div>
+          <div className="text-sm font-semibold" style={{ color: "var(--text-primary)", fontFamily: "Lora, serif" }}>"{result.query}"</div>
+        </div>
+        <div className="h-8 w-px shrink-0" style={{ background: "var(--border)" }} />
+        <div>
+          <div className="text-[9px] uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>Hype</div>
+          <div className="text-base font-bold font-mono" style={{ color: result.outperformCount > 0 ? "var(--success)" : "var(--text-primary)" }}>
+            {result.outperformCount} of {result.channels.length} outperforming
+          </div>
+        </div>
+        <div className="h-8 w-px shrink-0" style={{ background: "var(--border)" }} />
+        <div>
+          <div className="text-[9px] uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>Candidates considered</div>
+          <div className="text-sm font-mono" style={{ color: "var(--text-secondary)" }}>{result.totalCandidates}</div>
+        </div>
+        <div className="ml-auto text-[10px] text-right" style={{ color: "var(--text-muted)" }}>
+          {result.regionCode} · last {result.lookbackDays}d · ≥{fmtViewsN(result.minSubscribers)} subs
+          <br />
+          searched {fmtRelativeTime(result.searchedAt) ?? "just now"}
+        </div>
+      </div>
+
+      {result.channels.length === 0 ? (
+        <div className="flex flex-col items-center justify-center h-48" style={{ color: "var(--text-muted)" }}>
+          <div className="text-4xl mb-3">🤷</div>
+          <div className="text-sm" style={{ fontFamily: "Lora, serif" }}>No channels cleared the 500K+ subscriber bar</div>
+          <div className="text-xs mt-1">Try a broader or more popular topic.</div>
+        </div>
+      ) : (
+        <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))" }}>
+          {result.channels.map(ch => (
+            <TopicSearchChannelCard key={ch.channelId} channel={ch} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TopicSearchChannelCard({ channel: ch }: { channel: TopicSearchChannelResult }) {
+  return (
+    <a
+      href={ch.videoUrl}
+      target="_blank"
+      rel="noreferrer"
+      className="video-card flex flex-col gap-2 p-3"
+      style={{ color: "inherit", textDecoration: "none" }}
+    >
+      <div className="flex items-center gap-2">
+        <div
+          className="flex items-center justify-center rounded-full size-8 shrink-0 text-[11px] font-bold overflow-hidden"
+          style={{ background: "var(--bg-elevated)", color: "var(--accent-light)" }}
+        >
+          {ch.channelAvatarUrl ? (
+            <img src={ch.channelAvatarUrl} alt={ch.channelName} className="size-8 rounded-full object-cover" />
+          ) : (
+            ch.channelName.slice(0, 2).toUpperCase()
+          )}
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="text-xs font-semibold truncate" style={{ color: "var(--text-primary)", fontFamily: "Lora, serif" }}>{ch.channelName}</div>
+          <div className="text-[9px]" style={{ color: "var(--text-muted)" }}>{fmtViewsN(ch.subscriberCount)} subscribers</div>
+        </div>
+        <div className="text-[10px] font-bold px-1.5 py-0.5 rounded-full shrink-0" style={{ background: "var(--bg-elevated)", color: "var(--accent-light)" }}>
+          #{ch.rank}
+        </div>
+      </div>
+
+      <div className="text-xs font-medium leading-snug line-clamp-2" style={{ color: "var(--text-primary)" }} title={ch.videoTitle}>
+        {ch.videoTitle}
+      </div>
+
+      <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 pt-1.5" style={{ borderTop: "1px solid var(--border)" }}>
+        <div>
+          <div className="text-[9px]" style={{ color: "var(--text-muted)" }}>Views</div>
+          <div className="text-xs font-bold font-mono" style={{ color: "var(--text-primary)" }}>{fmtViewsN(ch.videoViews)}</div>
+        </div>
+        <div>
+          <div className="text-[9px]" style={{ color: "var(--text-muted)" }}>Channel median</div>
+          <div className="text-xs font-bold font-mono" style={{ color: "var(--text-primary)" }}>{fmtViewsN(ch.channelMedianViews)}</div>
+        </div>
+        <div>
+          <div className="text-[9px]" style={{ color: "var(--text-muted)" }}>Published</div>
+          <div className="text-xs font-mono" style={{ color: "var(--text-muted)" }}>{fmtDate(ch.videoPublishedAt)}</div>
+        </div>
+        <div>
+          <div className="text-[9px]" style={{ color: "var(--text-muted)" }}>vs. median</div>
+          <div className="text-xs font-bold font-mono" style={{ color: velocityRatioColor(ch.overperformRatio) }}>{fmtRatio(ch.overperformRatio)}</div>
+        </div>
+      </div>
+    </a>
+  );
+}
+
 // ─── Main App ─────────────────────────────────────────────────────────────────
 
 const EMPTY_VIDEOS: Video[] = [];
@@ -1909,6 +2121,11 @@ export default function App() {
           <div className="flex-1 overflow-y-auto">
             <CompetitorRoster channels={channels} onChanged={refreshChannelsAndCohorts} />
           </div>
+        ) : activeSection === "Search" ? (
+          <TopicSearchView
+            quotaBudget={systemStatus?.youtubeQuotaBudget ?? null}
+            quotaUsedToday={systemStatus?.youtubeQuotaUsedToday ?? null}
+          />
         ) : (
           <>
             {/* Filter Bar */}

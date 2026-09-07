@@ -185,3 +185,51 @@ class WorkspaceSettingsOut(CamelModel):
 
 class WorkspaceSettingsUpdate(BaseModel):
     instagram_scraping_enabled: bool
+
+
+# ── Topic search ("is this trending") ───────────────────────────────────────
+
+
+class TopicSearchRequest(BaseModel):
+    query: str
+
+
+class TopicSearchChannelResult(CamelModel):
+    rank: int
+    channel_id: str
+    channel_name: str
+    channel_handle: str | None = None
+    channel_avatar_url: str | None = None
+    subscriber_count: int
+    video_id: str
+    video_title: str
+    video_thumbnail_url: str | None = None
+    video_url: str
+    video_views: int
+    video_published_at: str  # "YYYY-MM-DD", see formatting.py
+    score: float
+    # None if this channel had no other recent uploads to compare against.
+    channel_median_views: float | None = None
+    overperform_ratio: float | None = None
+    is_outperforming: bool
+
+
+class TopicSearchResult(CamelModel):
+    """The single-slot cache's current contents — see app/topic_search.py's
+    module docstring. Both POST /api/search/topic (a fresh search) and GET
+    /api/search/latest (the page-reload path) return this same shape."""
+
+    query: str
+    searched_at: dt.datetime
+    lookback_days: int
+    min_subscribers: int
+    region_code: str
+    top_n: int
+    # How many videos survived the date filter + subscriber gate — the
+    # population `channels` was ranked out of.
+    total_candidates: int
+    # Of `channels` (already capped at top_n), how many are outperforming
+    # their own channel's median — the headline "X of N" readout.
+    outperform_count: int
+    youtube_quota_units_used: int
+    channels: list[TopicSearchChannelResult]

@@ -16,7 +16,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
-from app.routers import channels, health, scrape, settings as settings_router, system, videos
+from app.routers import channels, health, scrape, search, settings as settings_router, system, videos
 from app.scheduler import start_scheduler, stop_scheduler
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -52,6 +52,7 @@ app.include_router(videos.router)
 app.include_router(scrape.router)
 app.include_router(system.router)
 app.include_router(settings_router.router)
+app.include_router(search.router)
 
 
 @app.get("/")

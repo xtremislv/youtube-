@@ -114,6 +114,61 @@ class YouTubeClient:
             results.extend(resp.get("items", []))
         return results
 
+    def get_channels(self, channel_ids: list[str]) -> list[dict]:
+        """channels.list, batched 50 ids/call — 1 unit per call. Same shape
+        as get_channel() but for many channels at once (used by
+        app/topic_search.py to price a page of search results' subscriber
+        counts in a single call instead of one channels.list per video)."""
+        results: list[dict] = []
+        for i in range(0, len(channel_ids), VIDEOS_BATCH_SIZE):
+            batch = channel_ids[i : i + VIDEOS_BATCH_SIZE]
+            resp = (
+                self._youtube.channels()
+                .list(part="snippet,statistics,contentDetails", id=",".join(batch))
+                .execute()
+            )
+            self.quota_units_used += 1
+            results.extend(resp.get("items", []))
+        return results
+
+    def search_videos(
+        self,
+        *,
+        query: str,
+        published_after: dt.datetime,
+        region_code: str,
+        max_results: int = 50,
+    ) -> list[dict]:
+        """search.list — 100 units flat, regardless of maxResults or how
+        many items come back. By far the most expensive call this app
+        makes (everything else in this file deliberately avoids it — see
+        this module's docstring) so it exists only for the user-triggered
+        topic-search feature (app/topic_search.py), never for routine
+        channel scraping.
+
+        Ordered by relevance (the API default) rather than viewCount: this
+        call's job is to gather a topically-tight population of "videos
+        about this query" for topic_search.py to rank itself — asking
+        YouTube to pre-sort by view count would just swap in a more
+        mainstream, less query-specific set of results for us to rank
+        instead.
+        """
+        resp = (
+            self._youtube.search()
+            .list(
+                part="snippet",
+                q=query,
+                type="video",
+                order="relevance",
+                publishedAfter=published_after.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                regionCode=region_code,
+                maxResults=min(max_results, 50),
+            )
+            .execute()
+        )
+        self.quota_units_used += 100
+        return resp.get("items", [])
+
 
 # ── Pure parsing (no network, fully unit-testable) ──────────────────────────
 

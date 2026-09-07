@@ -7,8 +7,6 @@ workspace name — all of which were hardcoded placeholders (84%, 14,
 
 from __future__ import annotations
 
-import datetime as dt
-
 from fastapi import APIRouter, Depends
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -17,6 +15,7 @@ from app.config import Settings
 from app.database import get_db
 from app.deps import settings_dep
 from app.models import Channel, ScrapeRun, Video
+from app.quota import get_quota_used_today
 from app.schemas import SystemStatus
 
 router = APIRouter(prefix="/api/system", tags=["system"])
@@ -24,15 +23,18 @@ router = APIRouter(prefix="/api/system", tags=["system"])
 
 @router.get("/status", response_model=SystemStatus)
 def get_status(db: Session = Depends(get_db), settings: Settings = Depends(settings_dep)) -> SystemStatus:
-    today_start = dt.datetime.combine(dt.date.today(), dt.time.min)
-    quota_used_today = (
-        db.query(func.coalesce(func.sum(ScrapeRun.youtube_quota_units_used), 0))
-        .filter(ScrapeRun.platform == "youtube", ScrapeRun.started_at >= today_start)
-        .scalar()
-        or 0
-    )
+    quota_used_today = get_quota_used_today(db)
 
-    last_run = db.query(ScrapeRun).order_by(ScrapeRun.started_at.desc()).first()
+    # Excludes "youtube_search" (topic-search lookups, app/topic_search.py)
+    # deliberately — a search isn't a channel scrape, so it shouldn't be
+    # able to make this widget report a stale-looking "last scrape" time
+    # or status just because someone ran a search more recently.
+    last_run = (
+        db.query(ScrapeRun)
+        .filter(ScrapeRun.platform.in_(["youtube", "instagram"]))
+        .order_by(ScrapeRun.started_at.desc())
+        .first()
+    )
 
     total_channels = db.query(func.count(Channel.id)).filter(Channel.is_active.is_(True)).scalar() or 0
     total_videos = db.query(func.count(Video.id)).scalar() or 0
