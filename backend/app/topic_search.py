@@ -5,16 +5,24 @@ channel scrape pipeline (app/scrapers/*.py, app/overperformance.py).
 
 Method:
 
-1. ``search.list`` the query, restricted to videos published within the
-   last ``search_lookback_days`` days, region-scoped to
-   ``search_region_code``. This is the one expensive call (100 quota
-   units flat) — see YouTubeClient.search_videos()'s docstring for why
-   nothing else in this app uses it.
+1. ``search.list`` the query, restricted to a caller-chosen date range
+   (``date_from``/``date_to`` — the Trend Analysis tab's date filter,
+   defaulting to the last 30 days; either end can be left unset for an
+   open-ended "All time" search) and region-scoped to a caller-chosen
+   ``region_code`` (``None`` = "Global", no regionCode sent at all). This
+   is the one expensive call (100 quota units flat) — see
+   YouTubeClient.search_videos()'s docstring for why nothing else in this
+   app uses it. ``app/config.py``'s ``search_lookback_days``/
+   ``search_region_code`` only apply as fallback defaults when a caller
+   (e.g. a direct API request) omits these entirely — see
+   app/routers/search.py, which resolves the Trend Analysis tab's request
+   body against them before calling ``run_topic_search``.
 2. Fetch view counts (``videos.list``) and subscriber counts
    (``channels.list``) for every result, batched.
-3. Gate: drop any video whose channel has fewer than
-   ``search_min_subscribers`` subscribers (or a hidden subscriber count,
-   which can't be gated at all) — keeps one small channel's lucky video
+3. Gate: drop any video whose channel has fewer than a caller-chosen
+   ``min_subscribers`` threshold (defaulting to 500K — also a Trend
+   Analysis tab filter now) subscribers, or a hidden subscriber count
+   (which can't be gated at all) — keeps one small channel's lucky video
    from dominating the read.
 4. Score every surviving video with ``score_candidate()`` — views per
    subscriber per day since publish, i.e. "how hard is this moving,
@@ -99,9 +107,11 @@ class ResolvedChannel(RankedChannel):
 class TopicSearchOutcome:
     query: str
     searched_at: dt.datetime
-    lookback_days: int
+    date_from: dt.date | None
+    date_to: dt.date | None
+    lookback_days: int | None
     min_subscribers: int
-    region_code: str
+    region_code: str | None
     top_n: int
     total_candidates: int
     outperform_count: int
@@ -192,17 +202,46 @@ def estimate_quota_cost(settings: "Settings") -> int:
 # ── Orchestration (network + DB) ────────────────────────────────────────────
 
 
-def run_topic_search(db: "Session", settings: "Settings", query: str) -> TopicSearchOutcome:
+def run_topic_search(
+    db: "Session",
+    settings: "Settings",
+    query: str,
+    *,
+    min_subscribers: int,
+    region_code: str | None,
+    date_from: dt.date | None,
+    date_to: dt.date | None,
+) -> TopicSearchOutcome:
+    """Runs one live search. ``min_subscribers``/``region_code``/
+    ``date_from``/``date_to`` are the Trend Analysis tab's editable
+    filters (see app/routers/search.py, which resolves the request body's
+    optional overrides against ``settings``' defaults before calling this
+    — by the time it gets here every value is already concrete): a
+    ``region_code`` of ``None`` means no regional restriction ("Global"),
+    and a ``date_from``/``date_to`` of ``None`` means no lower/upper bound
+    on publish date ("All time" / "up to now", respectively).
+    """
     from app.scrapers.youtube import YouTubeClient, parse_channel_resource, parse_video_resource
 
     client = YouTubeClient(settings.youtube_api_key)
     now = dt.datetime.now(dt.timezone.utc)
-    published_after = now - dt.timedelta(days=settings.search_lookback_days)
+    published_after = (
+        dt.datetime.combine(date_from, dt.time.min, tzinfo=dt.timezone.utc) if date_from is not None else None
+    )
+    # Inclusive of the whole date_to day — YouTube's publishedBefore is a
+    # strict "<" cutoff, so the bound is midnight at the *start* of the
+    # following day, not end-of-day on date_to itself.
+    published_before = (
+        dt.datetime.combine(date_to + dt.timedelta(days=1), dt.time.min, tzinfo=dt.timezone.utc)
+        if date_to is not None
+        else None
+    )
 
     search_items = client.search_videos(
         query=query,
         published_after=published_after,
-        region_code=settings.search_region_code,
+        published_before=published_before,
+        region_code=region_code,
         max_results=settings.search_max_results,
     )
 
@@ -250,7 +289,7 @@ def run_topic_search(db: "Session", settings: "Settings", query: str) -> TopicSe
 
     ranked, total_candidates = select_top_channels(
         candidates,
-        min_subscribers=settings.search_min_subscribers,
+        min_subscribers=min_subscribers,
         top_n=settings.search_top_n_channels,
         now=now.date(),
     )
@@ -281,9 +320,11 @@ def run_topic_search(db: "Session", settings: "Settings", query: str) -> TopicSe
     outcome = TopicSearchOutcome(
         query=query,
         searched_at=now,
-        lookback_days=settings.search_lookback_days,
-        min_subscribers=settings.search_min_subscribers,
-        region_code=settings.search_region_code,
+        date_from=date_from,
+        date_to=date_to,
+        lookback_days=((date_to or now.date()) - date_from).days if date_from is not None else None,
+        min_subscribers=min_subscribers,
+        region_code=region_code,
         top_n=settings.search_top_n_channels,
         total_candidates=total_candidates,
         outperform_count=sum(1 for r in resolved if r.is_outperforming),
@@ -308,6 +349,8 @@ def _persist_outcome(db: "Session", outcome: TopicSearchOutcome) -> None:
             id=1,
             query=outcome.query,
             searched_at=outcome.searched_at,
+            date_from=outcome.date_from,
+            date_to=outcome.date_to,
             lookback_days=outcome.lookback_days,
             min_subscribers=outcome.min_subscribers,
             region_code=outcome.region_code,
@@ -380,6 +423,8 @@ def get_cached_search(db: "Session") -> TopicSearchOutcome | None:
     return TopicSearchOutcome(
         query=cache.query,
         searched_at=cache.searched_at,
+        date_from=cache.date_from,
+        date_to=cache.date_to,
         lookback_days=cache.lookback_days,
         min_subscribers=cache.min_subscribers,
         region_code=cache.region_code,

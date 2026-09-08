@@ -1551,12 +1551,23 @@ function ChannelStatCard({ channel: c, active, onClick, onClear }: { channel: Ch
 // overwrites it), so this view's own state just mirrors whatever that
 // endpoint currently holds rather than accumulating any history itself.
 
+type TrendRegion = "IN" | "GLOBAL";
+
 function TopicSearchView({ quotaBudget, quotaUsedToday }: { quotaBudget: number | null; quotaUsedToday: number | null }) {
   const [query, setQuery] = useState("");
   const [result, setResult] = useState<TopicSearchResult | null>(null);
   const [initialLoading, setInitialLoading] = useState(true);
   const [searching, setSearching] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Gating/date-range/region filters — same defaults called out in the
+  // brief (500K subs, last 30 days, India), same date-preset dropdown as
+  // the Overperformance tab's date filter (DATE_PRESETS/presetToRange,
+  // above) so picking "Custom range" behaves identically here.
+  const [minSubscribers, setMinSubscribers] = useState("500000");
+  const [datePreset, setDatePreset] = useState<DatePreset>("1m");
+  const [dateRange, setDateRange] = useState(() => presetToRange("1m"));
+  const [region, setRegion] = useState<TrendRegion>("IN");
 
   useEffect(() => {
     fetchLatestTopicSearch()
@@ -1572,7 +1583,14 @@ function TopicSearchView({ quotaBudget, quotaUsedToday }: { quotaBudget: number 
     setSearching(true);
     setError(null);
     try {
-      setResult(await searchTopic(trimmed));
+      setResult(
+        await searchTopic(trimmed, {
+          minSubscribers: Number(minSubscribers) || 0,
+          dateFrom: dateRange.dateFrom,
+          dateTo: dateRange.dateTo,
+          region,
+        }),
+      );
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Something went wrong — please try again.");
     } finally {
@@ -1585,7 +1603,7 @@ function TopicSearchView({ quotaBudget, quotaUsedToday }: { quotaBudget: number 
 
   return (
     <div className="flex-1 overflow-y-auto p-5">
-      <div className="flex flex-col gap-1 mb-6">
+      <div className="flex flex-col gap-2 mb-6">
         <form onSubmit={handleSearch} className="flex items-center gap-2 max-w-xl">
           <input
             value={query}
@@ -1607,14 +1625,73 @@ function TopicSearchView({ quotaBudget, quotaUsedToday }: { quotaBudget: number 
             {searching ? "Searching…" : "Search"}
           </button>
         </form>
+
+        {/* Gating/date-range/region filters — sent with the next search,
+            not applied retroactively to whatever's already on screen (this
+            isn't a client-side filter over cached results; each change
+            takes effect on the next POST /api/search/topic). */}
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="relative shrink-0">
+            <input
+              type="number"
+              min={0}
+              placeholder="Min subscribers"
+              value={minSubscribers}
+              onChange={e => setMinSubscribers(e.target.value)}
+              className="select-custom text-xs w-36"
+              style={{ fontFamily: "JetBrains Mono, monospace" }}
+              title="Only channels with at least this many subscribers are ranked"
+            />
+          </div>
+
+          <div className="flex items-center gap-1 shrink-0">
+            <select
+              value={datePreset}
+              onChange={e => {
+                const preset = e.target.value as DatePreset;
+                setDatePreset(preset);
+                if (preset !== "custom") setDateRange(presetToRange(preset));
+              }}
+              className="select-custom text-xs" style={{ fontFamily: "Inter, sans-serif" }}>
+              {DATE_PRESETS.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
+            </select>
+            {datePreset === "custom" && (
+              <>
+                <input type="date" value={dateRange.dateFrom}
+                  onChange={e => setDateRange({ ...dateRange, dateFrom: e.target.value })}
+                  className="select-custom text-xs" style={{ fontFamily: "JetBrains Mono, monospace" }} />
+                <span style={{ color: "var(--text-muted)" }} className="text-xs">→</span>
+                <input type="date" value={dateRange.dateTo}
+                  onChange={e => setDateRange({ ...dateRange, dateTo: e.target.value })}
+                  className="select-custom text-xs" style={{ fontFamily: "JetBrains Mono, monospace" }} />
+              </>
+            )}
+          </div>
+
+          <div className="flex rounded-lg overflow-hidden shrink-0" style={{ border: "1px solid var(--border)" }} title="Restrict the YouTube search to India, or search worldwide">
+            {(["IN", "GLOBAL"] as TrendRegion[]).map(r => (
+              <button key={r} type="button" onClick={() => setRegion(r)}
+                className="px-3 py-1.5 text-xs transition-all"
+                style={{
+                  background: region === r ? "var(--accent)" : "var(--bg-elevated)",
+                  color: region === r ? "var(--on-accent)" : "var(--text-muted)",
+                  fontFamily: "Inter, sans-serif",
+                  fontWeight: 500,
+                }}>
+                {r === "IN" ? "India" : "Global"}
+              </button>
+            ))}
+          </div>
+        </div>
+
         {remainingQuota != null && (
-          <div className="text-[10px] mt-1" style={{ color: "var(--text-muted)" }}>
+          <div className="text-[10px]" style={{ color: "var(--text-muted)" }}>
             ~120 quota units per search · ~{remainingQuota.toLocaleString()} left in today's budget
           </div>
         )}
         {error && (
           <div
-            className="text-xs mt-2 px-3 py-2 rounded-lg max-w-xl"
+            className="text-xs mt-1 px-3 py-2 rounded-lg max-w-xl"
             style={{ background: "rgba(248,113,113,0.1)", color: "var(--tier-danger)", border: "1px solid var(--tier-danger)" }}
           >
             {error}
@@ -1664,7 +1741,7 @@ function TopicSearchResults({ result }: { result: TopicSearchResult }) {
           <div className="text-sm font-mono" style={{ color: "var(--text-secondary)" }}>{result.totalCandidates}</div>
         </div>
         <div className="ml-auto text-[10px] text-right" style={{ color: "var(--text-muted)" }}>
-          {result.regionCode} · last {result.lookbackDays}d · ≥{fmtViewsN(result.minSubscribers)} subs
+          {result.regionCode ?? "Global"} · {result.dateFrom ? `last ${result.lookbackDays}d` : "all time"} · ≥{fmtViewsN(result.minSubscribers)} subs
           <br />
           searched {fmtRelativeTime(result.searchedAt) ?? "just now"}
         </div>
@@ -1673,7 +1750,7 @@ function TopicSearchResults({ result }: { result: TopicSearchResult }) {
       {result.channels.length === 0 ? (
         <div className="flex flex-col items-center justify-center h-48" style={{ color: "var(--text-muted)" }}>
           <div className="text-4xl mb-3">🤷</div>
-          <div className="text-sm" style={{ fontFamily: "Lora, serif" }}>No channels cleared the 500K+ subscriber bar</div>
+          <div className="text-sm" style={{ fontFamily: "Lora, serif" }}>No channels cleared the {fmtViewsN(result.minSubscribers)}+ subscriber bar</div>
           <div className="text-xs mt-1">Try a broader or more popular topic.</div>
         </div>
       ) : (

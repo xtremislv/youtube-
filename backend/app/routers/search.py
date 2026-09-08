@@ -35,10 +35,57 @@ router = APIRouter(prefix="/api/search", tags=["search"])
 logger = logging.getLogger(__name__)
 
 
+def _resolve_filters(payload: TopicSearchRequest, settings: Settings) -> tuple[int, str | None, dt.date | None, dt.date | None]:
+    """Validates and resolves the Trend Analysis tab's editable filters
+    (min-subscriber gate, date range, region) against Settings' defaults
+    for whatever the request omits. Raises HTTPException(400) on anything
+    malformed rather than letting a bad request reach YouTube. Returns
+    (min_subscribers, region_code, date_from, date_to) — region_code and
+    the dates may be None (meaning "no restriction"), min_subscribers
+    never is.
+    """
+    min_subscribers = payload.min_subscribers if payload.min_subscribers is not None else settings.search_min_subscribers
+    if min_subscribers < 0:
+        raise HTTPException(status_code=400, detail="min_subscribers must not be negative.")
+
+    region = (payload.region or "").strip().upper()
+    if not region:
+        region_code: str | None = settings.search_region_code
+    elif region == "GLOBAL":
+        region_code = None
+    else:
+        region_code = region
+
+    def _parse_date(raw: str | None, field_name: str) -> dt.date | None:
+        if not raw:
+            return None
+        try:
+            return dt.date.fromisoformat(raw)
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"{field_name} must be a valid YYYY-MM-DD date.") from None
+
+    date_from = _parse_date(payload.date_from, "date_from")
+    date_to = _parse_date(payload.date_to, "date_to")
+
+    # Neither end supplied at all (as opposed to an explicit "" from the
+    # UI's "All time" preset) — a bare API request with no date fields
+    # gets the old fixed-lookback behavior rather than an unbounded (and
+    # much more expensive/lower-quality) all-time search by accident.
+    if payload.date_from is None and payload.date_to is None:
+        date_from = dt.datetime.now(dt.timezone.utc).date() - dt.timedelta(days=settings.search_lookback_days)
+
+    if date_from is not None and date_to is not None and date_from > date_to:
+        raise HTTPException(status_code=400, detail="date_from must not be after date_to.")
+
+    return min_subscribers, region_code, date_from, date_to
+
+
 def _to_response(outcome: TopicSearchOutcome) -> TopicSearchResult:
     return TopicSearchResult(
         query=outcome.query,
         searched_at=outcome.searched_at,
+        date_from=outcome.date_from.isoformat() if outcome.date_from else None,
+        date_to=outcome.date_to.isoformat() if outcome.date_to else None,
         lookback_days=outcome.lookback_days,
         min_subscribers=outcome.min_subscribers,
         region_code=outcome.region_code,
@@ -88,6 +135,8 @@ def search_topic(
     if not settings.youtube_api_key:
         raise HTTPException(status_code=503, detail="YOUTUBE_API_KEY is not configured.")
 
+    min_subscribers, region_code, date_from, date_to = _resolve_filters(payload, settings)
+
     # Cooldown — keyed off the cache's own searched_at rather than a
     # separate lookup, since there's always exactly zero or one row there.
     cache = db.get(TopicSearchCache, 1)
@@ -133,7 +182,15 @@ def search_topic(
     from app.topic_search import run_topic_search
 
     try:
-        outcome = run_topic_search(db, settings, query)
+        outcome = run_topic_search(
+            db,
+            settings,
+            query,
+            min_subscribers=min_subscribers,
+            region_code=region_code,
+            date_from=date_from,
+            date_to=date_to,
+        )
     except Exception as exc:  # noqa: BLE001 — one YouTube API hiccup (network error,
         # quota exceeded mid-flight) covers the whole search; roll back so a
         # partially-flushed cache write can't leave the single-slot cache

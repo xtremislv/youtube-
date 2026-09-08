@@ -135,8 +135,9 @@ class YouTubeClient:
         self,
         *,
         query: str,
-        published_after: dt.datetime,
-        region_code: str,
+        published_after: dt.datetime | None = None,
+        published_before: dt.datetime | None = None,
+        region_code: str | None = None,
         max_results: int = 50,
     ) -> list[dict]:
         """search.list — 100 units flat, regardless of maxResults or how
@@ -152,20 +153,28 @@ class YouTubeClient:
         YouTube to pre-sort by view count would just swap in a more
         mainstream, less query-specific set of results for us to rank
         instead.
+
+        ``published_after``/``published_before``/``region_code`` are all
+        optional — the Trend Analysis tab's date range and region filters
+        (see app/topic_search.py) map straight onto these, and omitting
+        any of them just means "no restriction on that dimension" (an
+        unbounded/"All time" search, or a worldwide/"Global" one) rather
+        than a required value.
         """
-        resp = (
-            self._youtube.search()
-            .list(
-                part="snippet",
-                q=query,
-                type="video",
-                order="relevance",
-                publishedAfter=published_after.strftime("%Y-%m-%dT%H:%M:%SZ"),
-                regionCode=region_code,
-                maxResults=min(max_results, 50),
-            )
-            .execute()
-        )
+        kwargs: dict = {
+            "part": "snippet",
+            "q": query,
+            "type": "video",
+            "order": "relevance",
+            "maxResults": min(max_results, 50),
+        }
+        if published_after is not None:
+            kwargs["publishedAfter"] = published_after.strftime("%Y-%m-%dT%H:%M:%SZ")
+        if published_before is not None:
+            kwargs["publishedBefore"] = published_before.strftime("%Y-%m-%dT%H:%M:%SZ")
+        if region_code:
+            kwargs["regionCode"] = region_code
+        resp = self._youtube.search().list(**kwargs).execute()
         self.quota_units_used += 100
         return resp.get("items", [])
 

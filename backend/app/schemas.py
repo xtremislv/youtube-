@@ -192,6 +192,18 @@ class WorkspaceSettingsUpdate(BaseModel):
 
 class TopicSearchRequest(BaseModel):
     query: str
+    # All optional — the Trend Analysis tab always sends concrete values
+    # (its own UI defaults: 500K subs, last 30 days, India), but a direct
+    # API caller can omit any of these to fall back to app/config.py's
+    # Settings defaults. See app/routers/search.py for how each is
+    # resolved/validated before reaching app/topic_search.py.
+    min_subscribers: int | None = None
+    # "YYYY-MM-DD"; either/both may be omitted for an open-ended search.
+    date_from: str | None = None
+    date_to: str | None = None
+    # An ISO 3166-1 alpha-2 region code (e.g. "IN"), or "GLOBAL"/omitted
+    # for no regional restriction.
+    region: str | None = None
 
 
 class TopicSearchChannelResult(CamelModel):
@@ -221,9 +233,11 @@ class TopicSearchResult(CamelModel):
 
     query: str
     searched_at: dt.datetime
-    lookback_days: int
+    date_from: str | None = None  # "YYYY-MM-DD"; None = no lower bound ("All time")
+    date_to: str | None = None  # "YYYY-MM-DD"; None = up to now
+    lookback_days: int | None = None  # derived/display-only; None when date_from is unset
     min_subscribers: int
-    region_code: str
+    region_code: str | None = None  # None = no regional restriction ("Global")
     top_n: int
     # How many videos survived the date filter + subscriber gate — the
     # population `channels` was ranked out of.

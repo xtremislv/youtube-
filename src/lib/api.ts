@@ -303,9 +303,11 @@ export interface TopicSearchChannelResult {
 export interface TopicSearchResult {
   query: string;
   searchedAt: string;
-  lookbackDays: number;
+  dateFrom: string | null; // "YYYY-MM-DD"; null = no lower bound ("All time")
+  dateTo: string | null; // "YYYY-MM-DD"; null = up to now
+  lookbackDays: number | null; // derived/display-only; null when dateFrom is unset
   minSubscribers: number;
-  regionCode: string;
+  regionCode: string | null; // null = no regional restriction ("Global")
   topN: number;
   // How many videos survived the date filter + subscriber gate — the
   // population `channels` was ranked out of.
@@ -323,16 +325,37 @@ export function fetchLatestTopicSearch(): Promise<TopicSearchResult | null> {
   return request<TopicSearchResult | null>("/api/search/latest");
 }
 
+export interface TopicSearchFilters {
+  // All optional — omitting a field falls back to the backend's own
+  // default (500K subs / last 60 days / India — see
+  // backend/app/config.py's Settings). The Trend Analysis tab's UI always
+  // sends concrete values for its own defaults (500K / last 30 days /
+  // India) instead of relying on this fallback; it exists mainly for
+  // "All time" (send dateFrom/dateTo as "" explicitly — distinct from
+  // omitting them, which gets the backend's fixed lookback instead) and
+  // "Global" (region: "GLOBAL" — no regionCode sent to YouTube at all).
+  minSubscribers?: number;
+  dateFrom?: string; // "YYYY-MM-DD", or "" for no lower bound
+  dateTo?: string; // "YYYY-MM-DD", or "" for no upper bound
+  region?: "IN" | "GLOBAL" | (string & {});
+}
+
 /**
  * POST /api/search/topic — runs a fresh search against YouTube right now.
- * Real quota spend; expect an ApiError (429 cooldown/budget, 502 upstream
- * failure, 503 not configured) rather than treating every rejection as
- * unexpected — see backend/app/routers/search.py.
+ * Real quota spend; expect an ApiError (400 bad filter, 429 cooldown/
+ * budget, 502 upstream failure, 503 not configured) rather than treating
+ * every rejection as unexpected — see backend/app/routers/search.py.
  */
-export function searchTopic(query: string): Promise<TopicSearchResult> {
+export function searchTopic(query: string, filters: TopicSearchFilters = {}): Promise<TopicSearchResult> {
   return request<TopicSearchResult>("/api/search/topic", {
     method: "POST",
-    body: JSON.stringify({ query }),
+    body: JSON.stringify({
+      query,
+      min_subscribers: filters.minSubscribers,
+      date_from: filters.dateFrom,
+      date_to: filters.dateTo,
+      region: filters.region,
+    }),
   });
 }
 

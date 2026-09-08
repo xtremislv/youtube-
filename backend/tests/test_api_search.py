@@ -12,7 +12,7 @@ from app.models import ScrapeRun
 from app.topic_search import CandidateVideo, ResolvedChannel, TopicSearchOutcome, _persist_outcome
 
 
-def _fake_outcome(query="iphone review", quota=122):
+def _fake_outcome(query="iphone review", quota=122, *, min_subscribers=500_000, region_code="IN", date_from=None, date_to=None):
     candidate = CandidateVideo(
         video_external_id="abc123",
         title="iPhone Ultra Review",
@@ -26,12 +26,15 @@ def _fake_outcome(query="iphone review", quota=122):
         channel_avatar_url="https://img.example/mkbhd.jpg",
         subscriber_count=19_000_000,
     )
+    date_from = date_from if date_from is not None else dt.date(2026, 8, 8)  # 30 days before searched_at below
     return TopicSearchOutcome(
         query=query,
         searched_at=dt.datetime.now(dt.timezone.utc),
-        lookback_days=60,
-        min_subscribers=500_000,
-        region_code="IN",
+        date_from=date_from,
+        date_to=date_to,
+        lookback_days=(date_to - date_from).days if date_from and date_to else (30 if date_from else None),
+        min_subscribers=min_subscribers,
+        region_code=region_code,
         top_n=10,
         total_candidates=23,
         outperform_count=1,
@@ -49,10 +52,16 @@ def _fake_outcome(query="iphone review", quota=122):
     )
 
 
-def _install_fake_search(monkeypatch, db_session, *, outcome=None, error=None):
+def _install_fake_search(monkeypatch, db_session, *, outcome=None, error=None, calls=None):
+    """``calls``, if given a list, gets one dict appended per invocation
+    with the resolved filter kwargs the router passed through — lets a
+    test assert on what actually reached run_topic_search without caring
+    about its real YouTube-calling internals."""
     import app.topic_search as topic_search_module
 
-    def _fake(db, settings, query):
+    def _fake(db, settings, query, **kwargs):
+        if calls is not None:
+            calls.append(kwargs)
         if error is not None:
             raise error
         result = outcome or _fake_outcome(query=query)
@@ -93,6 +102,104 @@ def test_search_topic_requires_youtube_api_key_configured(client):
     resp = client.post("/api/search/topic", json={"query": "iphone review"})
     assert resp.status_code == 503
     assert "YOUTUBE_API_KEY" in resp.json()["detail"]
+
+
+def test_search_topic_rejects_negative_min_subscribers(client, test_settings):
+    test_settings.youtube_api_key = "fake-key"
+    resp = client.post("/api/search/topic", json={"query": "iphone review", "min_subscribers": -1})
+    assert resp.status_code == 400
+
+
+def test_search_topic_rejects_malformed_date(client, test_settings):
+    test_settings.youtube_api_key = "fake-key"
+    resp = client.post("/api/search/topic", json={"query": "iphone review", "date_from": "not-a-date"})
+    assert resp.status_code == 400
+
+
+def test_search_topic_rejects_date_from_after_date_to(client, test_settings):
+    test_settings.youtube_api_key = "fake-key"
+    resp = client.post(
+        "/api/search/topic",
+        json={"query": "iphone review", "date_from": "2026-09-01", "date_to": "2026-08-01"},
+    )
+    assert resp.status_code == 400
+
+
+# ── POST /api/search/topic — filter resolution (min subs / date range / region) ─
+
+
+def test_search_topic_defaults_filters_when_omitted(client, db_session, test_settings, monkeypatch):
+    test_settings.youtube_api_key = "fake-key"
+    calls = []
+    _install_fake_search(monkeypatch, db_session, calls=calls)
+
+    resp = client.post("/api/search/topic", json={"query": "iphone review"})
+    assert resp.status_code == 200, resp.text
+    assert calls[0]["min_subscribers"] == test_settings.search_min_subscribers
+    assert calls[0]["region_code"] == test_settings.search_region_code
+    assert calls[0]["date_to"] is None
+    assert calls[0]["date_from"] == dt.datetime.now(dt.timezone.utc).date() - dt.timedelta(
+        days=test_settings.search_lookback_days
+    )
+
+
+def test_search_topic_passes_through_custom_min_subscribers(client, db_session, test_settings, monkeypatch):
+    test_settings.youtube_api_key = "fake-key"
+    calls = []
+    _install_fake_search(monkeypatch, db_session, calls=calls)
+
+    resp = client.post("/api/search/topic", json={"query": "iphone review", "min_subscribers": 250_000})
+    assert resp.status_code == 200, resp.text
+    assert calls[0]["min_subscribers"] == 250_000
+
+
+def test_search_topic_global_region_resolves_to_no_regional_restriction(client, db_session, test_settings, monkeypatch):
+    test_settings.youtube_api_key = "fake-key"
+    calls = []
+    _install_fake_search(monkeypatch, db_session, calls=calls)
+
+    resp = client.post("/api/search/topic", json={"query": "iphone review", "region": "global"})
+    assert resp.status_code == 200, resp.text
+    assert calls[0]["region_code"] is None
+
+
+def test_search_topic_explicit_region_passes_through(client, db_session, test_settings, monkeypatch):
+    test_settings.youtube_api_key = "fake-key"
+    calls = []
+    _install_fake_search(monkeypatch, db_session, calls=calls)
+
+    resp = client.post("/api/search/topic", json={"query": "iphone review", "region": "US"})
+    assert resp.status_code == 200, resp.text
+    assert calls[0]["region_code"] == "US"
+
+
+def test_search_topic_all_time_when_dates_explicitly_blank(client, db_session, test_settings, monkeypatch):
+    # An explicit "" for both (the UI's "All time" preset) is a deliberate
+    # unbounded search — distinct from omitting the fields entirely, which
+    # falls back to settings.search_lookback_days instead (see the test
+    # above).
+    test_settings.youtube_api_key = "fake-key"
+    calls = []
+    _install_fake_search(monkeypatch, db_session, calls=calls)
+
+    resp = client.post("/api/search/topic", json={"query": "iphone review", "date_from": "", "date_to": ""})
+    assert resp.status_code == 200, resp.text
+    assert calls[0]["date_from"] is None
+    assert calls[0]["date_to"] is None
+
+
+def test_search_topic_custom_date_range_passes_through(client, db_session, test_settings, monkeypatch):
+    test_settings.youtube_api_key = "fake-key"
+    calls = []
+    _install_fake_search(monkeypatch, db_session, calls=calls)
+
+    resp = client.post(
+        "/api/search/topic",
+        json={"query": "iphone review", "date_from": "2026-07-01", "date_to": "2026-08-01"},
+    )
+    assert resp.status_code == 200, resp.text
+    assert calls[0]["date_from"] == dt.date(2026, 7, 1)
+    assert calls[0]["date_to"] == dt.date(2026, 8, 1)
 
 
 # ── POST /api/search/topic — success path ───────────────────────────────────

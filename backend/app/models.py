@@ -240,12 +240,21 @@ class TopicSearchCache(Base):
     query: Mapped[str] = mapped_column(String(200), nullable=False)
     searched_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
-    # The settings this particular search ran with — recorded per-search
+    # The filters this particular search ran with — recorded per-search
     # (rather than always trusting current config) so the numbers shown
-    # stay self-consistent even if an env var changes later.
-    lookback_days: Mapped[int] = mapped_column(Integer, nullable=False)
+    # stay self-consistent even if an env var or the UI's defaults change
+    # later. date_from/date_to are the actual gating filters now (user-
+    # editable in the Trend Analysis tab, mirroring the Overperformance
+    # tab's date range picker); lookback_days is kept as a derived,
+    # display-only convenience (days between date_from and date_to, or
+    # None when date_from is unset — "All time").
+    date_from: Mapped[dt.date | None] = mapped_column(Date, nullable=True)
+    date_to: Mapped[dt.date | None] = mapped_column(Date, nullable=True)
+    lookback_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
     min_subscribers: Mapped[int] = mapped_column(Integer, nullable=False)
-    region_code: Mapped[str] = mapped_column(String(8), nullable=False)
+    # None = no regional restriction ("Global" in the UI); otherwise an
+    # ISO 3166-1 alpha-2 code (e.g. "IN").
+    region_code: Mapped[str | None] = mapped_column(String(16), nullable=True)
     top_n: Mapped[int] = mapped_column(Integer, nullable=False)
 
     # How many videos survived the date filter + subscriber gate — the
