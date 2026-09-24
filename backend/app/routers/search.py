@@ -26,6 +26,7 @@ from sqlalchemy.orm import Session
 from app.config import Settings
 from app.database import get_db
 from app.deps import settings_dep
+from app.error_safety import safe_error_message
 from app.models import ScrapeRun, TopicSearchCache
 from app.quota import get_quota_used_today
 from app.schemas import TopicSearchChannelResult, TopicSearchRequest, TopicSearchResult
@@ -198,10 +199,16 @@ def search_topic(
         db.rollback()
         run.status = "failed"
         run.finished_at = utcnow()
-        run.error_message = str(exc)[:4000]
+        # safe_error_message, not str(exc): this endpoint has no API key, so
+        # whoever sent the request that caused this reads `detail` directly
+        # — google-api-python-client's HttpError embeds the full failing
+        # request URL (key=YOUTUBE_API_KEY included) in str(exc), which must
+        # never reach an unauthenticated caller. See app/error_safety.py.
+        safe_message = safe_error_message(exc)
+        run.error_message = safe_message[:4000]
         db.commit()
         logger.exception("Topic search failed for query=%r", query)
-        raise HTTPException(status_code=502, detail=f"Topic search failed: {exc}") from exc
+        raise HTTPException(status_code=502, detail=f"Topic search failed: {safe_message}") from exc
 
     run.status = "success"
     run.finished_at = utcnow()

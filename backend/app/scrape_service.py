@@ -13,6 +13,7 @@ import logging
 from sqlalchemy.orm import Session
 
 from app.config import Settings
+from app.error_safety import safe_error_message
 from app.models import Channel, ScrapeRun
 from app.settings_service import get_workspace_settings
 from app.timeutil import utcnow
@@ -79,7 +80,9 @@ def _scrape_platform(db: Session, settings: Settings, platform: str) -> ScrapeRu
             _run_instagram(db, settings, channels, run, errors)
     except Exception as exc:  # noqa: BLE001 — record and surface, never crash the caller
         logger.exception("Scrape run failed for platform=%s", platform)
-        errors.append(str(exc))
+        # safe_error_message, not str(exc): this run's error_message ends up
+        # in GET /api/scrape/runs, which has no auth — see app/error_safety.py.
+        errors.append(safe_error_message(exc))
 
     run.finished_at = utcnow()
     run.status = "failed" if not run.channels_processed else ("partial" if errors else "success")
@@ -112,7 +115,7 @@ def _run_youtube(db: Session, settings: Settings, channels: list[Channel], run: 
         except Exception as exc:  # noqa: BLE001
             db.rollback()
             logger.exception("YouTube scrape failed for channel %s", channel.id)
-            errors.append(f"{channel.id}: {exc}")
+            errors.append(f"{channel.id}: {safe_error_message(exc)}")
     run.youtube_quota_units_used = client.quota_units_used
 
 
@@ -134,5 +137,5 @@ def _run_instagram(db: Session, settings: Settings, channels: list[Channel], run
         except Exception as exc:  # noqa: BLE001
             db.rollback()
             logger.exception("Instagram scrape failed for channel %s", channel.id)
-            errors.append(f"{channel.id}: {exc}")
+            errors.append(f"{channel.id}: {safe_error_message(exc)}")
     run.apify_runs_started = client.runs_started

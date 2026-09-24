@@ -56,6 +56,7 @@ from typing import Any
 from apify_client import ApifyClient
 from sqlalchemy.orm import Session
 
+from app.error_safety import safe_error_message
 from app.formatting import initials_from_name, normalize_handle
 from app.models import Channel, Video
 from app.overperformance import recompute_and_store_channel_baselines
@@ -159,7 +160,9 @@ def normalize_instagram_item(raw: dict, *, channel_id: str) -> dict | None:
         "platform": "instagram",
         "title": title,
         "thumbnail_url": _first_present(raw, "displayUrl", "thumbnailUrl", "thumbnailSrc"),
-        "external_url": _first_present(raw, "url", default=f"https://www.instagram.com/p/{shortcode}/"),
+        "external_url": _safe_external_url(
+            _first_present(raw, "url", default=None), f"https://www.instagram.com/p/{shortcode}/"
+        ),
         "views": int(views),
         "likes": _int_or_none(_first_present(raw, "likesCount", "likes")),
         "comments": _int_or_none(_first_present(raw, "commentsCount", "comments")),
@@ -167,6 +170,25 @@ def normalize_instagram_item(raw: dict, *, channel_id: str) -> dict | None:
         "duration_seconds": int(float(duration)) if duration else 0,
         "format": "reel",
     }
+
+
+def _safe_external_url(raw_url: Any, fallback: str) -> str:
+    """Only ever store an http(s) URL as Video.external_url — this value is
+    later rendered as a clickable ``<a href>`` on the dashboard's video card
+    (see src/App.tsx's VideoCard) with no further validation on that end.
+    ``raw_url`` comes straight off a rented Apify actor's output, whose
+    schema "is not standardized... and changes when actor authors update
+    them" (this module's docstring) — a misbehaving or compromised actor
+    returning something like a ``javascript:`` URI in its ``url`` field
+    would otherwise become a stored-XSS payload the moment a teammate
+    clicks that video. Anything that isn't a plain http(s) URL falls back
+    to the same canonical post URL already used when the actor omits a
+    ``url`` field entirely, so this changes behavior only for input that
+    was never a valid link to begin with.
+    """
+    if isinstance(raw_url, str) and raw_url.strip().lower().startswith(("http://", "https://")):
+        return raw_url
+    return fallback
 
 
 def _int_or_none(value: Any) -> int | None:
@@ -252,7 +274,7 @@ def scrape_channel(client: ApifyInstagramClient, db: Session, channel: Channel, 
     try:
         items = client.fetch_profile_posts(username, max_posts=settings.apify_max_posts_per_channel)
     except Exception as exc:  # noqa: BLE001 — a single channel's actor failure shouldn't kill the batch
-        stats.errors.append(f"Apify run failed for @{username}: {exc}")
+        stats.errors.append(f"Apify run failed for @{username}: {safe_error_message(exc)}")
         stats.runs_started = client.runs_started
         return stats
 
@@ -291,7 +313,7 @@ def scrape_channel(client: ApifyInstagramClient, db: Session, channel: Channel, 
         try:
             refresh_items = client.fetch_posts_by_url(stale_urls)
         except Exception as exc:  # noqa: BLE001 — the discovery batch already staged above shouldn't be lost
-            stats.errors.append(f"Apify refresh run failed for @{username}: {exc}")
+            stats.errors.append(f"Apify refresh run failed for @{username}: {safe_error_message(exc)}")
             refresh_items = []
         for raw_item in refresh_items:
             parsed = normalize_instagram_item(raw_item, channel_id=channel.id)

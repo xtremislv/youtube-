@@ -38,6 +38,7 @@ from sqlalchemy.orm import Session
 from app.config import Settings
 from app.database import get_db
 from app.deps import require_scrape_api_key, settings_dep
+from app.error_safety import safe_error_message
 from app.models import ScrapeRun
 from app.schemas import ScrapeRunOut, ScrapeTriggerResponse, VelocityCheckResponse
 from app.scrape_service import run_daily_scrape
@@ -133,7 +134,11 @@ def trigger_velocity_check(
         # retry — see hourly-velocity-check.yml).
         db.rollback()
         logger.exception("Velocity checkpoint check failed")
-        raise HTTPException(status_code=502, detail=f"Velocity check failed: {exc}") from exc
+        # safe_error_message: this is behind require_scrape_api_key, but the
+        # message is still worth scrubbing (see app/error_safety.py) rather
+        # than assuming every caller who knows the trigger key should also
+        # see the raw YouTube request URL.
+        raise HTTPException(status_code=502, detail=f"Velocity check failed: {safe_error_message(exc)}") from exc
 
     return VelocityCheckResponse(
         message=(
