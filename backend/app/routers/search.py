@@ -25,6 +25,7 @@ from sqlalchemy.orm import Session
 
 from app.config import Settings
 from app.database import get_db
+from app.db_lock import LOCK_KEY_TOPIC_SEARCH, session_scoped_lock
 from app.deps import settings_dep
 from app.error_safety import safe_error_message
 from app.models import ScrapeRun, TopicSearchCache
@@ -139,80 +140,95 @@ def search_topic(
 
     min_subscribers, region_code, date_from, date_to = _resolve_filters(payload, settings)
 
-    # Cooldown — keyed off the cache's own searched_at rather than a
-    # separate lookup, since there's always exactly zero or one row there.
-    cache = db.get(TopicSearchCache, 1)
-    if cache is not None:
-        searched_at = ensure_aware_utc(cache.searched_at)
-        now = utcnow()
-        elapsed_seconds = (now - searched_at).total_seconds()
-        remaining_seconds = settings.topic_search_cooldown_seconds - elapsed_seconds
-        if remaining_seconds > 0:
+    # Closes the check-then-act race between the cooldown check below and
+    # the cache row that actually records a search happened — see
+    # app/db_lock.py's docstring. Unlike /api/scrape/run-manual's lock, this
+    # one has to be session-scoped (survive the several db.commit() calls
+    # below) rather than released at the first commit: the cooldown here is
+    # keyed off TopicSearchCache.searched_at, which isn't written until
+    # run_topic_search's whole YouTube round trip finishes — a plain
+    # transaction-scoped lock would release right after the early
+    # ScrapeRun("running") commit, long before that write, and so wouldn't
+    # actually stop two concurrent requests from both passing the cooldown
+    # check. Held on its own dedicated connection (not `db`) specifically
+    # because this section commits `db` multiple times — see
+    # session_scoped_lock's docstring for why taking it on `db` itself would
+    # be unsafe. A no-op on the SQLite the test suite runs against.
+    with session_scoped_lock(db, LOCK_KEY_TOPIC_SEARCH):
+        # Cooldown — keyed off the cache's own searched_at rather than a
+        # separate lookup, since there's always exactly zero or one row there.
+        cache = db.get(TopicSearchCache, 1)
+        if cache is not None:
+            searched_at = ensure_aware_utc(cache.searched_at)
+            now = utcnow()
+            elapsed_seconds = (now - searched_at).total_seconds()
+            remaining_seconds = settings.topic_search_cooldown_seconds - elapsed_seconds
+            if remaining_seconds > 0:
+                raise HTTPException(
+                    status_code=429,
+                    detail=f"A search already ran {int(elapsed_seconds)}s ago. Try again in {int(remaining_seconds)}s.",
+                    headers={"Retry-After": str(int(remaining_seconds))},
+                )
+
+        # Budget guard — refuse up front rather than fail halfway through after
+        # already spending most of a day's remaining quota on a search that
+        # then can't finish its (cheaper) per-channel median lookups.
+        estimated_cost = estimate_quota_cost(settings)
+        used_today = get_quota_used_today(db)
+        if used_today + estimated_cost > settings.youtube_daily_quota_budget:
+            remaining = max(0, settings.youtube_daily_quota_budget - used_today)
             raise HTTPException(
                 status_code=429,
-                detail=f"A search already ran {int(elapsed_seconds)}s ago. Try again in {int(remaining_seconds)}s.",
-                headers={"Retry-After": str(int(remaining_seconds))},
+                detail=(
+                    f"This search could cost up to ~{estimated_cost} quota units, but only ~{remaining} "
+                    "remain in today's budget. Try again after the daily quota resets."
+                ),
             )
 
-    # Budget guard — refuse up front rather than fail halfway through after
-    # already spending most of a day's remaining quota on a search that
-    # then can't finish its (cheaper) per-channel median lookups.
-    estimated_cost = estimate_quota_cost(settings)
-    used_today = get_quota_used_today(db)
-    if used_today + estimated_cost > settings.youtube_daily_quota_budget:
-        remaining = max(0, settings.youtube_daily_quota_budget - used_today)
-        raise HTTPException(
-            status_code=429,
-            detail=(
-                f"This search could cost up to ~{estimated_cost} quota units, but only ~{remaining} "
-                "remain in today's budget. Try again after the daily quota resets."
-            ),
-        )
-
-    run = ScrapeRun(platform="youtube_search", started_at=utcnow(), status="running")
-    db.add(run)
-    db.commit()
-    db.refresh(run)
-
-    # Local import (matches /api/scrape/check-velocity's pattern in
-    # app/routers/scrape.py): the one call in this endpoint that actually
-    # talks to YouTube, imported lazily so tests can monkeypatch
-    # app.routers.search.run_topic_search without needing the real
-    # YOUTUBE_API_KEY / network access this would otherwise require.
-    from app.topic_search import run_topic_search
-
-    try:
-        outcome = run_topic_search(
-            db,
-            settings,
-            query,
-            min_subscribers=min_subscribers,
-            region_code=region_code,
-            date_from=date_from,
-            date_to=date_to,
-        )
-    except Exception as exc:  # noqa: BLE001 — one YouTube API hiccup (network error,
-        # quota exceeded mid-flight) covers the whole search; roll back so a
-        # partially-flushed cache write can't leave the single-slot cache
-        # half-overwritten, log it, and surface a clean 502 rather than a
-        # bare stack trace — matches /api/scrape/check-velocity's handling.
-        db.rollback()
-        run.status = "failed"
-        run.finished_at = utcnow()
-        # safe_error_message, not str(exc): this endpoint has no API key, so
-        # whoever sent the request that caused this reads `detail` directly
-        # — google-api-python-client's HttpError embeds the full failing
-        # request URL (key=YOUTUBE_API_KEY included) in str(exc), which must
-        # never reach an unauthenticated caller. See app/error_safety.py.
-        safe_message = safe_error_message(exc)
-        run.error_message = safe_message[:4000]
+        run = ScrapeRun(platform="youtube_search", started_at=utcnow(), status="running")
+        db.add(run)
         db.commit()
-        logger.exception("Topic search failed for query=%r", query)
-        raise HTTPException(status_code=502, detail=f"Topic search failed: {safe_message}") from exc
+        db.refresh(run)
 
-    run.status = "success"
-    run.finished_at = utcnow()
-    run.youtube_quota_units_used = outcome.youtube_quota_units_used
-    db.commit()
+        # Local import (matches /api/scrape/check-velocity's pattern in
+        # app/routers/scrape.py): the one call in this endpoint that actually
+        # talks to YouTube, imported lazily so tests can monkeypatch
+        # app.routers.search.run_topic_search without needing the real
+        # YOUTUBE_API_KEY / network access this would otherwise require.
+        from app.topic_search import run_topic_search
 
-    return _to_response(outcome)
+        try:
+            outcome = run_topic_search(
+                db,
+                settings,
+                query,
+                min_subscribers=min_subscribers,
+                region_code=region_code,
+                date_from=date_from,
+                date_to=date_to,
+            )
+        except Exception as exc:  # noqa: BLE001 — one YouTube API hiccup (network error,
+            # quota exceeded mid-flight) covers the whole search; roll back so a
+            # partially-flushed cache write can't leave the single-slot cache
+            # half-overwritten, log it, and surface a clean 502 rather than a
+            # bare stack trace — matches /api/scrape/check-velocity's handling.
+            db.rollback()
+            run.status = "failed"
+            run.finished_at = utcnow()
+            # safe_error_message, not str(exc): this endpoint has no API key, so
+            # whoever sent the request that caused this reads `detail` directly
+            # — google-api-python-client's HttpError embeds the full failing
+            # request URL (key=YOUTUBE_API_KEY included) in str(exc), which must
+            # never reach an unauthenticated caller. See app/error_safety.py.
+            safe_message = safe_error_message(exc)
+            run.error_message = safe_message[:4000]
+            db.commit()
+            logger.exception("Topic search failed for query=%r", query)
+            raise HTTPException(status_code=502, detail=f"Topic search failed: {safe_message}") from exc
+
+        run.status = "success"
+        run.finished_at = utcnow()
+        run.youtube_quota_units_used = outcome.youtube_quota_units_used
+        db.commit()
+
+        return _to_response(outcome)

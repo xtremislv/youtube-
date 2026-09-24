@@ -32,11 +32,12 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.config import Settings
 from app.database import get_db
+from app.db_lock import LOCK_KEY_MANUAL_SCRAPE, advisory_lock
 from app.deps import require_scrape_api_key, settings_dep
 from app.error_safety import safe_error_message
 from app.models import ScrapeRun
@@ -69,6 +70,16 @@ def trigger_manual_scrape(
 ) -> ScrapeTriggerResponse:
     if platform not in (None, "youtube", "instagram"):
         raise HTTPException(status_code=400, detail="platform must be 'youtube' or 'instagram' if given.")
+
+    # Closes the check-then-act race between the cooldown check below and the
+    # new "running" ScrapeRun row that run_daily_scrape commits moments later
+    # (see app/db_lock.py's docstring): without this, two requests arriving
+    # within the same short window (a double-click, two tabs, or a direct
+    # curl replay — there's no auth in front of this endpoint to make that
+    # hard) can both read "no recent run" before either has committed
+    # anything, both bypassing the cooldown and burning quota/Apify credit
+    # twice. A no-op on the SQLite the test suite runs against.
+    advisory_lock(db, LOCK_KEY_MANUAL_SCRAPE)
 
     query = db.query(ScrapeRun)
     if platform is not None:
@@ -104,7 +115,7 @@ def trigger_manual_scrape(
 
 
 @router.get("/runs", response_model=list[ScrapeRunOut])
-def list_runs(limit: int = 20, db: Session = Depends(get_db)) -> list[ScrapeRunOut]:
+def list_runs(limit: int = Query(default=20, ge=1, le=200), db: Session = Depends(get_db)) -> list[ScrapeRunOut]:
     rows = db.query(ScrapeRun).order_by(ScrapeRun.started_at.desc()).limit(limit).all()
     return [ScrapeRunOut.model_validate(r) for r in rows]
 

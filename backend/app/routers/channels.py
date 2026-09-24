@@ -34,6 +34,8 @@ from app.schemas import ChannelCreate, ChannelOut, ChannelUpdate, CohortOut
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/channels", tags=["channels"])
 
+PLATFORMS = {"all", "youtube", "instagram"}
+
 
 def _median_views_last_10_by_channel(db: Session) -> dict[str, float]:
     """One channel -> median `views` of that channel's 10 most recently
@@ -97,6 +99,9 @@ def list_channels(
     include_inactive: bool = False,
     db: Session = Depends(get_db),
 ) -> list[ChannelOut]:
+    if platform is not None and platform not in PLATFORMS:
+        raise HTTPException(status_code=422, detail=f"platform must be one of {sorted(PLATFORMS)}.")
+
     # One grouped query for every channel's video stats (avg views, video
     # count, most recent publish date), outer-joined onto the channel list —
     # avoids an N+1 query per channel. Backs the roster's channel card;
@@ -155,6 +160,12 @@ def create_channel(payload: ChannelCreate, db: Session = Depends(get_db), settin
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except DuplicateChannelError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    # No user auth in front of this endpoint (see PRODUCTION_ROADMAP.md's
+    # Phase 2 notes), so there's no "who" to log — but "what changed and
+    # when" is still worth a record for debugging a roster that changed
+    # unexpectedly, matching the audit-trail style already used for scrape
+    # runs (app/scrape_service.py) and settings changes below.
+    logger.info("Channel added: %s (%s)", channel.id, channel.handle)
     return _to_out(channel)
 
 
@@ -171,6 +182,9 @@ def update_channel(channel_id: str, payload: ChannelUpdate, db: Session = Depend
         channel.notes = payload.notes
     db.commit()
     db.refresh(channel)
+    logger.info(
+        "Channel updated: %s (cohort=%r, isActive=%s)", channel.id, channel.cohort, channel.is_active
+    )
     return _to_out(channel)
 
 
@@ -179,5 +193,9 @@ def delete_channel(channel_id: str, db: Session = Depends(get_db)) -> None:
     channel = db.get(Channel, channel_id)
     if channel is None:
         raise HTTPException(status_code=404, detail="Channel not found")
+    handle = channel.handle  # captured before commit — a deleted+committed
+    # ORM instance's attributes are expired and can't be safely re-read from
+    # a row that no longer exists.
     db.delete(channel)
     db.commit()
+    logger.info("Channel removed: %s (%s)", channel_id, handle)

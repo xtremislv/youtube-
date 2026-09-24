@@ -216,3 +216,33 @@ def test_metric_median_changes_overperform_count_and_sort(client, db_session):
     non_null = [r for r in ratios if r is not None]
     assert non_null == sorted(non_null, reverse=True)
     assert sorted_body["videos"][0]["id"] == "v2"  # highest median ratio (2.6) sorts first
+
+
+# ── Invalid enum-shaped query params ────────────────────────────────────────
+# platform/format/sort_by/metric used to silently no-op or fall back on an
+# unrecognized value (a typo would just look like "nothing matched" rather
+# than a clear error) — see app/routers/videos.py.
+
+
+def test_invalid_platform_is_rejected(client, db_session):
+    _seed(db_session)
+    resp = client.get("/api/videos", params={"platform": "tiktok"})
+    assert resp.status_code == 422
+
+
+def test_invalid_format_is_rejected(client, db_session):
+    _seed(db_session)
+    resp = client.get("/api/videos", params={"format": "carousel"})
+    assert resp.status_code == 422
+
+
+def test_invalid_sort_by_is_rejected(client, db_session):
+    _seed(db_session)
+    resp = client.get("/api/videos", params={"sort_by": "popularity"})
+    assert resp.status_code == 422
+
+
+def test_invalid_metric_is_rejected(client, db_session):
+    _seed(db_session)
+    resp = client.get("/api/videos", params={"metric": "mode"})
+    assert resp.status_code == 422

@@ -132,6 +132,20 @@ class Settings(BaseSettings):
     # clicks shouldn't be able to multiply for free.
     topic_search_cooldown_seconds: int = 60
 
+    # Blanket per-client-IP request cap across every route (see app/
+    # rate_limit.py) — a generic abuse/DoS backstop, independent of the
+    # domain-specific cooldowns above (manual scrape, topic search), since
+    # this app currently has no authentication in front of anything else
+    # (see PRODUCTION_ROADMAP.md's Phase 2 notes): without this, a scripted
+    # client could hammer any read endpoint as fast as the network allows.
+    # Sized generously — a real person clicking around the dashboard,
+    # including rapid filter changes and "Load more" paging, comes nowhere
+    # close to this in normal use. Disabled in the test suite (see
+    # tests/conftest.py) so hundreds of requests across a fast test run
+    # don't trip a limit meant for one real client.
+    rate_limit_enabled: bool = True
+    rate_limit_requests_per_minute: int = 300
+
     @property
     def cors_origin_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]

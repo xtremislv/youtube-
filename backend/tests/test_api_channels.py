@@ -134,6 +134,11 @@ def test_delete_channel(client):
     assert client.delete(f"/api/channels/{created['id']}").status_code == 404
 
 
+def test_invalid_platform_filter_is_rejected(client):
+    resp = client.get("/api/channels", params={"platform": "tiktok"})
+    assert resp.status_code == 422
+
+
 def test_cohorts_endpoint_reflects_real_channels(client):
     client.post("/api/channels", json={"platform": "youtube", "handle": "@a", "cohort": "Tech Giants"})
     client.post("/api/channels", json={"platform": "youtube", "handle": "@b", "cohort": "Tech Giants"})

@@ -21,7 +21,12 @@ settings = get_settings()
 # pool_pre_ping=True: cheap health check on each checkout so a connection
 # that a free-tier Postgres silently dropped (Neon autosuspends after 5 min
 # idle) gets transparently replaced instead of surfacing as a 500.
-engine = create_engine(settings.database_url, pool_pre_ping=True, future=True)
+# pool_recycle=1800: proactively retire any pooled connection older than 30
+# minutes rather than waiting to discover it's dead — belt-and-suspenders
+# alongside pool_pre_ping (which only catches an already-dead connection at
+# checkout time) against a middlebox/load balancer between here and Neon
+# silently closing a long-idle connection outside of Neon's own autosuspend.
+engine = create_engine(settings.database_url, pool_pre_ping=True, pool_recycle=1800, future=True)
 
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
 

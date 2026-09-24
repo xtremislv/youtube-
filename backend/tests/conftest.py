@@ -52,6 +52,13 @@ def test_settings() -> Settings:
         apify_api_token="",
         scrape_trigger_api_key="test-secret",
         cors_origins="http://localhost:5173",
+        # The blanket per-IP rate limit (app/rate_limit.py) is a single
+        # process-wide counter — every TestClient request in this suite
+        # shares one fake client IP, so leaving this on would make the
+        # suite's own request volume trip a limit meant for one real
+        # caller. Individual rate-limit behavior is covered on its own in
+        # tests/test_rate_limit.py with the limiter exercised directly.
+        rate_limit_enabled=False,
     )
 
 

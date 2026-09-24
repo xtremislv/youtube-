@@ -125,6 +125,30 @@ def test_instagram_paused_toggle_also_blocks_manual_refresh(client):
     assert resp.json()["runs"][0]["status"] == "skipped"
 
 
+# ── GET /api/scrape/runs — limit bound ───────────────────────────────────────
+# limit used to be a plain unbounded int; a caller could ask for an
+# arbitrarily large page (?limit=999999999) and force a needlessly large
+# query against a table that's otherwise never queried without a limit.
+
+
+def test_list_runs_rejects_limit_below_one(client):
+    resp = client.get("/api/scrape/runs", params={"limit": 0})
+    assert resp.status_code == 422
+
+
+def test_list_runs_rejects_limit_above_cap(client):
+    resp = client.get("/api/scrape/runs", params={"limit": 201})
+    assert resp.status_code == 422
+
+
+def test_list_runs_default_limit_works(client):
+    resp = client.post("/api/scrape/run", headers={"X-API-Key": "test-secret"})
+    assert resp.status_code == 200
+    resp = client.get("/api/scrape/runs")
+    assert resp.status_code == 200
+    assert len(resp.json()) == 2  # one per platform, from the run above
+
+
 # ── POST /api/scrape/check-velocity — see app/velocity.py ───────────────────
 # Same X-API-Key gate as /run (Depends(require_scrape_api_key)), so the auth
 # behavior is identical; the extra case here is that it fails closed with a

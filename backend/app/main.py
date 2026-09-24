@@ -12,15 +12,18 @@ from __future__ import annotations
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.responses import JSONResponse
 
 from app.config import get_settings
+from app.deps import rate_limit_dep
 from app.routers import channels, health, scrape, search, settings as settings_router, system, videos
 from app.scheduler import start_scheduler, stop_scheduler
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -36,6 +39,13 @@ app = FastAPI(
     description="Backend for the TW-DASH competitor dashboard: tracked channels, scraped videos, and overperformance analytics.",
     version="1.0.0",
     lifespan=lifespan,
+    # A blanket per-IP rate limit on every route (see app/deps.py's
+    # rate_limit_dep and app/rate_limit.py) — applied at the app level
+    # rather than per-router so nothing added later can accidentally skip
+    # it. /healthz is exempted inside the dependency itself (Render/uptime
+    # monitors poll it on their own schedule, not a client this is meant to
+    # guard against).
+    dependencies=[Depends(rate_limit_dep)],
 )
 
 settings = get_settings()
@@ -97,6 +107,31 @@ async def security_headers(request, call_next):
     response.headers["Permissions-Policy"] = "geolocation=(), camera=(), microphone=()"
     response.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains"
     return response
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    """
+    Every route that catches its own expected failure modes already turns
+    them into a clean HTTPException with a safe message (see, e.g.,
+    app/error_safety.py's safe_error_message for the scrape/search paths).
+    This is the backstop for anything that *isn't* expected — a genuine bug,
+    a DB error a route didn't anticipate, and so on — which would otherwise
+    reach Starlette's own default handler. That default handler already
+    doesn't leak a traceback to the client (FastAPI runs with debug=False
+    here), but it returns a bare "Internal Server Error" *plain-text* body,
+    inconsistent with every other error response in this API (all
+    ``{"detail": ...}`` JSON) and something the frontend's fetch wrapper
+    (src/lib/api.ts) has to fall back to a generic message for rather than
+    reading a real one. This handler unifies that: log the real exception
+    server-side (with a traceback, for debugging) and return a fixed,
+    generic message — deliberately not ``str(exc)``, since an unanticipated
+    exception (unlike the ones safe_error_message specifically targets)
+    hasn't been vetted for what it might embed (a raw SQL fragment, an
+    internal path, etc.).
+    """
+    logger.exception("Unhandled exception on %s %s", request.method, request.url.path)
+    return JSONResponse(status_code=500, content={"detail": "Something went wrong on the server. Please try again."})
 
 
 app.include_router(health.router)

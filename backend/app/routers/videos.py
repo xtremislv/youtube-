@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from datetime import date
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import case, func, or_
 from sqlalchemy.orm import Session, joinedload
 
@@ -29,6 +29,9 @@ from app.schemas import VideoListResponse, VideoOut
 router = APIRouter(prefix="/api/videos", tags=["videos"])
 
 SORT_COLUMNS = {"ratio", "views", "date", "engagement"}
+PLATFORMS = {"all", "youtube", "instagram"}
+FORMATS = {"all", "long", "short", "reel"}
+METRICS = {"average", "median"}
 
 
 def _to_out(video: Video) -> VideoOut:
@@ -95,6 +98,20 @@ def list_videos(
     db: Session = Depends(get_db),
     settings: Settings = Depends(settings_dep),
 ) -> VideoListResponse:
+    # Anything outside these small, known sets used to just silently filter
+    # down to zero rows (a typo'd platform/format value would look
+    # indistinguishable from "no videos match") rather than telling the
+    # caller their request was malformed — same class of gap sort_by already
+    # avoided by validating below.
+    if platform not in PLATFORMS:
+        raise HTTPException(status_code=422, detail=f"platform must be one of {sorted(PLATFORMS)}.")
+    if format not in FORMATS:
+        raise HTTPException(status_code=422, detail=f"format must be one of {sorted(FORMATS)}.")
+    if sort_by not in SORT_COLUMNS:
+        raise HTTPException(status_code=422, detail=f"sort_by must be one of {sorted(SORT_COLUMNS)}.")
+    if metric not in METRICS:
+        raise HTTPException(status_code=422, detail=f"metric must be one of {sorted(METRICS)}.")
+
     threshold = overperform_ratio_threshold if overperform_ratio_threshold is not None else settings.overperform_ratio_default
     ratio_column = Video.overperform_ratio_median if metric == "median" else Video.overperform_ratio
 
@@ -134,8 +151,6 @@ def list_videos(
         ),
     ).one()
 
-    if sort_by not in SORT_COLUMNS:
-        sort_by = "ratio"
     if sort_by == "views":
         query = query.order_by(Video.views.desc())
     elif sort_by == "date":

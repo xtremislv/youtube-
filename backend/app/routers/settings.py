@@ -20,6 +20,8 @@ this app is exposed beyond a trusted team.
 
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
@@ -27,6 +29,7 @@ from app.database import get_db
 from app.schemas import WorkspaceSettingsOut, WorkspaceSettingsUpdate
 from app.settings_service import get_workspace_settings, set_instagram_scraping_enabled
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
 
@@ -38,4 +41,8 @@ def get_scraper_settings(db: Session = Depends(get_db)) -> WorkspaceSettingsOut:
 @router.patch("/scraper", response_model=WorkspaceSettingsOut)
 def update_scraper_settings(payload: WorkspaceSettingsUpdate, db: Session = Depends(get_db)) -> WorkspaceSettingsOut:
     row = set_instagram_scraping_enabled(db, payload.instagram_scraping_enabled)
+    # This flag is what actually stops Apify spend (see app/scrape_service.py)
+    # — worth a clear record of when it flipped, given no user auth means no
+    # "who" to attach to it.
+    logger.info("Instagram scraping toggle set to %s", row.instagram_scraping_enabled)
     return WorkspaceSettingsOut.model_validate(row)

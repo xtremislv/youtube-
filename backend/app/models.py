@@ -202,7 +202,15 @@ class ScrapeRun(Base):
 
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    __table_args__ = (Index("ix_scrape_runs_started_at", "started_at"),)
+    __table_args__ = (
+        Index("ix_scrape_runs_started_at", "started_at"),
+        # Backs the manual-scrape cooldown check (app/routers/scrape.py's
+        # trigger_manual_scrape) and GET /api/system/status's "last scrape"
+        # lookup, both of which filter by platform and then order by
+        # started_at desc — a composite index lets that be an index scan
+        # instead of a full-table scan + sort as this log table grows.
+        Index("ix_scrape_runs_platform_started_at", "platform", "started_at"),
+    )
 
 
 class WorkspaceSettings(Base):
