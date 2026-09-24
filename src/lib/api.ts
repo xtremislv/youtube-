@@ -163,23 +163,88 @@ class ApiError extends Error {
   }
 }
 
+// No call in this app should be able to hang forever — a stalled mobile
+// connection or a proxy that swallows a response without ever closing the
+// socket would otherwise leave whatever `loading` flag gated this call
+// (videosLoading, submitting, refreshing, …) stuck true indefinitely, with
+// no way out for the person looking at it short of reloading the page.
+const DEFAULT_TIMEOUT_MS = 20_000;
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, {
-    headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
-    ...init,
-  });
+  // A caller-supplied signal (App.tsx's debounced video fetch cancelling a
+  // superseded request) and our own timeout both need to be able to end
+  // this fetch, so both are wired onto one controller rather than relying
+  // on AbortSignal.any (recent enough that assuming it's available isn't
+  // worth it here).
+  const controller = new AbortController();
+  const externalSignal = init?.signal;
+  if (externalSignal) {
+    if (externalSignal.aborted) controller.abort();
+    else externalSignal.addEventListener("abort", () => controller.abort(), { once: true });
+  }
+  const timeoutId = window.setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
+
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}${path}`, {
+      headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
+      ...init,
+      signal: controller.signal,
+    });
+  } catch (err) {
+    // Our own timeout, not the caller's own cancellation (the video-fetch
+    // effect already checks a `cancelled` flag before ever looking at what
+    // kind of error this was, so this message is only ever seen for a call
+    // that really did just time out).
+    if (controller.signal.aborted && !externalSignal?.aborted) {
+      throw new ApiError("The server took too long to respond. Check your connection and try again.", 0);
+    }
+    // A caller-initiated cancellation (AbortError) or a real network failure
+    // (offline, DNS, connection refused — a TypeError from fetch itself).
+    // Re-thrown as-is: every call site already falls back to a generic
+    // "couldn't load/save" message for anything that isn't an ApiError, and
+    // the cancellation case is discarded by the caller's own guard before
+    // it ever reaches a user-visible message.
+    throw err;
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
+
   if (!res.ok) {
-    let detail = res.statusText;
+    let detail = _statusFallbackMessage(res.status, res.statusText);
     try {
       const body = await res.json();
-      detail = body.detail ?? detail;
+      detail = typeof body?.detail === "string" && body.detail ? body.detail : detail;
     } catch {
-      // response wasn't JSON — fall back to statusText
+      // Error response wasn't JSON (a proxy's own HTML error page for a 502/
+      // 504, for instance) — the status-based fallback above already covers it.
     }
     throw new ApiError(detail, res.status);
   }
   if (res.status === 204) return undefined as T;
-  return res.json() as Promise<T>;
+  try {
+    return (await res.json()) as T;
+  } catch {
+    // A 200 with a body that isn't valid JSON (truncated by a dropped
+    // connection, a misbehaving proxy, …) — surfaced the same way any other
+    // failure is, rather than letting a raw SyntaxError reach the caller.
+    throw new ApiError("The server sent back a response we couldn't understand. Please try again.", res.status);
+  }
+}
+
+/** A human-readable fallback for when the server's error response has no
+ * usable `detail` field of its own — covers the specific statuses this
+ * app's own infrastructure (Render's free tier sleeping/cold-starting, a
+ * proxy timing out) is most likely to actually produce. */
+function _statusFallbackMessage(status: number, statusText: string): string {
+  if (status === 401 || status === 403) return "This request wasn't authorized.";
+  if (status === 404) return "That item couldn't be found — it may have already been removed.";
+  if (status === 429) return "Too many requests — please wait a moment and try again.";
+  if (status === 502 || status === 503 || status === 504) {
+    return "The server is temporarily unavailable — it may be starting up. Please try again in a moment.";
+  }
+  if (status >= 500) return "Something went wrong on the server. Please try again.";
+  return statusText || "Something went wrong.";
 }
 
 /**

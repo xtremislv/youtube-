@@ -587,7 +587,7 @@ function NavIcon({ icon, active }: { icon: string; active: boolean }) {
 
 // ─── Notification Panel ───────────────────────────────────────────────────────
 
-function NotificationPanel({ videos, loading, onClose }: { videos: Video[]; loading: boolean; onClose: () => void }) {
+function NotificationPanel({ videos, loading, error, onClose }: { videos: Video[]; loading: boolean; error?: string | null; onClose: () => void }) {
   const topVideos = videos.slice(0, 5);
   const ytCount = videos.filter(v => v.platform === "youtube").length;
   const igCount = videos.filter(v => v.platform === "instagram").length;
@@ -609,6 +609,11 @@ function NotificationPanel({ videos, loading, onClose }: { videos: Video[]; load
 
       {loading ? (
         <div className="px-4 py-6 text-xs text-center" style={{ color: "var(--text-muted)" }}>Loading…</div>
+      ) : error ? (
+        <div className="px-4 py-6 text-xs text-center" style={{ color: "var(--text-muted)" }}>
+          <div className="mb-1" style={{ color: "var(--tier-danger)" }}>Couldn't load this.</div>
+          {error}
+        </div>
       ) : videos.length === 0 ? (
         <div className="px-4 py-6 text-xs text-center" style={{ color: "var(--text-muted)" }}>
           No videos are overperforming yet. Add channels and run a scrape to start tracking.
@@ -1013,6 +1018,36 @@ function velocityRatioColor(ratio: number | null | undefined): string {
   return "var(--tier-orange)";
 }
 
+// A placeholder shaped like VideoCard itself (same thumbnail aspect ratio,
+// same title/meta line stack) rather than a generic spinner or bare "Loading
+// videos…" text — shown while the debounced fetch effect below is in
+// flight, so the layout doesn't jump between the loading and loaded states
+// and there's an immediate visual sense of "a grid of videos is coming"
+// instead of a blank pause.
+function VideoCardSkeleton({ mode }: { mode: ViewMode }) {
+  const pulse = { background: "var(--bg-elevated)" };
+  if (mode === "list") {
+    return (
+      <div className="video-card flex items-center gap-4 p-3">
+        <div className="shrink-0 rounded-lg w-32 h-20 animate-pulse" style={pulse} />
+        <div className="flex-1 min-w-0 flex flex-col gap-2">
+          <div className="h-3.5 w-3/4 rounded animate-pulse" style={pulse} />
+          <div className="h-3 w-1/3 rounded animate-pulse" style={pulse} />
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div className="video-card flex flex-col">
+      <div className="w-full aspect-video animate-pulse" style={pulse} />
+      <div className="p-3 flex flex-col gap-2">
+        <div className="h-3.5 w-5/6 rounded animate-pulse" style={pulse} />
+        <div className="h-3 w-1/2 rounded animate-pulse" style={pulse} />
+      </div>
+    </div>
+  );
+}
+
 // Wrapped in React.memo: the video grid can render up to VIDEOS_PAGE_SIZE
 // (and more once "Load more" grows it) of these per render, and App()'s own
 // state (notifications, filter-bar UI, theme, etc.) changes far more often
@@ -1035,7 +1070,13 @@ const VideoCard = React.memo(function VideoCard({ video, mode, metric = "average
     : ratio >= 2 ? "var(--warning)"
     : "var(--tier-orange)";
   const baselineLabel = metric === "median" ? "vs median" : "vs avg";
-  const thumb = video.thumbnail;
+  // Thumbnail URLs come straight from YouTube's/Instagram's CDN and can 404 or
+  // time out well after the video was scraped (same staleness issue as
+  // avatarUrl — see the Avatar component above). A `thumbFailed` flag lets a
+  // broken thumbnail degrade to the same "no thumbnail" treatment each mode
+  // already has, instead of showing a permanently broken image icon.
+  const [thumbFailed, setThumbFailed] = useState(false);
+  const thumb = thumbFailed ? null : video.thumbnail;
   const Wrapper = video.url ? "a" : "div";
   const wrapperProps = video.url ? { href: video.url, target: "_blank", rel: "noreferrer" } : {};
 
@@ -1043,7 +1084,7 @@ const VideoCard = React.memo(function VideoCard({ video, mode, metric = "average
     return (
       <Wrapper {...(wrapperProps as any)} className="video-card flex items-center gap-4 p-3 cursor-pointer group">
         <div className="relative shrink-0 rounded-lg overflow-hidden w-32 h-20" style={{ background: "var(--bg-elevated)" }}>
-          {thumb ? <img src={thumb} alt={video.title} className="size-full object-cover" loading="lazy" /> : null}
+          {thumb ? <img src={thumb} alt={video.title} className="size-full object-cover" loading="lazy" onError={() => setThumbFailed(true)} /> : null}
           <div className="absolute bottom-1 right-1 text-[10px] px-1 rounded font-mono" style={{ background: "rgba(0,0,0,0.75)", color: "#fff" }}>
             {video.duration}
           </div>
@@ -1097,7 +1138,13 @@ const VideoCard = React.memo(function VideoCard({ video, mode, metric = "average
     <Wrapper {...(wrapperProps as any)} className="video-card cursor-pointer group flex flex-col">
       <div className="relative w-full aspect-video overflow-hidden" style={{ background: "var(--bg-elevated)" }}>
         {thumb ? (
-          <img src={thumb} alt={video.title} className="size-full object-cover group-hover:scale-105 transition-transform duration-300" loading="lazy" />
+          <img
+            src={thumb}
+            alt={video.title}
+            className="size-full object-cover group-hover:scale-105 transition-transform duration-300"
+            loading="lazy"
+            onError={() => setThumbFailed(true)}
+          />
         ) : (
           <div className="size-full flex items-center justify-center text-3xl">🎬</div>
         )}
@@ -1191,16 +1238,42 @@ function ChartPanel({ videos, metric }: { videos: Video[]; metric: OverperformMe
 // registers it for the next scrape run — it does not scrape immediately (see
 // that router's module docstring for why).
 
-function CompetitorRoster({ channels, onChanged }: { channels: Channel[]; onChanged: () => void }) {
+function CompetitorRoster({
+  channels,
+  onChanged,
+  loading,
+  error,
+  onRetry,
+}: {
+  channels: Channel[];
+  onChanged: () => void;
+  loading?: boolean;
+  error?: string | null;
+  onRetry?: () => void;
+}) {
   const [platform, setPlatform] = useState<"youtube" | "instagram">("youtube");
   const [handle, setHandle] = useState("");
   const [cohort, setCohort] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
+  // Per-channel in-flight tracking for the remove/pause-resume buttons below
+  // — without it, a rapid double-click (or a slow connection making the
+  // first click's request take a while to resolve) fires a second DELETE/
+  // PATCH for the same channel before the first has come back, and a failed
+  // request had no way to tell the user anything went wrong at all (the row
+  // just silently stayed as-is).
+  const [pendingIds, setPendingIds] = useState<Set<string>>(() => new Set());
+  const [rowErrors, setRowErrors] = useState<Record<string, string>>({});
+
   async function handleAdd(e: React.FormEvent) {
     e.preventDefault();
-    if (!handle.trim()) return;
+    // The submit button is already `disabled={submitting || ...}`, but that
+    // alone leaves a narrow window for a rapid double-click/double-Enter to
+    // fire before React re-renders the disabled state — every other mutation
+    // handler in this file guards explicitly rather than relying on the
+    // button alone, so this one should too.
+    if (submitting || !handle.trim()) return;
     setSubmitting(true);
     setFormError(null);
     try {
@@ -1215,28 +1288,74 @@ function CompetitorRoster({ channels, onChanged }: { channels: Channel[]; onChan
     }
   }
 
-  // useCallback (keyed only on `onChanged`, which is itself the stable
-  // refreshChannelsAndCohorts from App()) so these keep the same identity
-  // across CompetitorRoster's own re-renders (e.g. every keystroke in the
-  // add-channel form above). ChannelCard is passed these directly instead
-  // of wrapping them in a fresh per-item arrow function at the .map call
-  // site below — that inline-arrow pattern would hand ChannelCard a new
-  // onToggleActive/onRemove reference on every render regardless, which
-  // defeats ChannelCard's React.memo before it ever gets to compare props.
+  // useCallback (keyed on `onChanged` and `pendingIds`) so these keep a
+  // stable-ish identity across CompetitorRoster's own re-renders (e.g. every
+  // keystroke in the add-channel form above). ChannelCard is passed these
+  // directly instead of wrapping them in a fresh per-item arrow function at
+  // the .map call site below — that inline-arrow pattern would hand
+  // ChannelCard a new onToggleActive/onRemove reference on every render
+  // regardless, which defeats ChannelCard's React.memo before it ever gets
+  // to compare props.
   const handleRemove = useCallback(
     async (id: string) => {
-      await deleteChannel(id);
-      onChanged();
+      if (pendingIds.has(id)) return; // a remove is already in flight for this row
+      setPendingIds(prev => new Set(prev).add(id));
+      setRowErrors(prev => {
+        if (!(id in prev)) return prev;
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
+      try {
+        await deleteChannel(id);
+        onChanged();
+        // No explicit success cleanup of pendingIds/rowErrors for this id:
+        // onChanged() reloads the channel list, and a successful delete
+        // means this channel (and its ChannelCard) won't be in it anymore.
+      } catch (err) {
+        setRowErrors(prev => ({
+          ...prev,
+          [id]: err instanceof ApiError ? err.message : "Could not remove this channel.",
+        }));
+        setPendingIds(prev => {
+          if (!prev.has(id)) return prev;
+          const next = new Set(prev);
+          next.delete(id);
+          return next;
+        });
+      }
     },
-    [onChanged],
+    [onChanged, pendingIds],
   );
 
   const handleToggleActive = useCallback(
     async (c: Channel) => {
-      await updateChannel(c.id, { isActive: !c.isActive });
-      onChanged();
+      if (pendingIds.has(c.id)) return; // a toggle is already in flight for this row
+      setPendingIds(prev => new Set(prev).add(c.id));
+      setRowErrors(prev => {
+        if (!(c.id in prev)) return prev;
+        const next = { ...prev };
+        delete next[c.id];
+        return next;
+      });
+      try {
+        await updateChannel(c.id, { isActive: !c.isActive });
+        onChanged();
+      } catch (err) {
+        setRowErrors(prev => ({
+          ...prev,
+          [c.id]: err instanceof ApiError ? err.message : "Could not update this channel.",
+        }));
+      } finally {
+        setPendingIds(prev => {
+          if (!prev.has(c.id)) return prev;
+          const next = new Set(prev);
+          next.delete(c.id);
+          return next;
+        });
+      }
     },
-    [onChanged],
+    [onChanged, pendingIds],
   );
 
   return (
@@ -1270,7 +1389,26 @@ function CompetitorRoster({ channels, onChanged }: { channels: Channel[]; onChan
         {formError && <div className="text-xs w-full" style={{ color: "var(--tier-orange)" }}>{formError}</div>}
       </form>
 
-      {channels.length === 0 ? (
+      {error ? (
+        <div className="flex flex-col items-center justify-center h-48" style={{ color: "var(--text-muted)" }}>
+          <div className="text-4xl mb-3">⚠️</div>
+          <div className="text-sm" style={{ fontFamily: "Lora, serif" }}>Couldn't load your tracked channels</div>
+          <div className="text-xs mt-1">{error}</div>
+          {onRetry && (
+            <button
+              onClick={onRetry}
+              className="mt-3 px-3 py-1.5 rounded-lg text-xs font-semibold transition-opacity"
+              style={{ background: "var(--bg-elevated)", border: "1px solid var(--border)", color: "var(--text-primary)" }}
+            >
+              Try again
+            </button>
+          )}
+        </div>
+      ) : loading ? (
+        <div className="flex flex-col items-center justify-center h-48" style={{ color: "var(--text-muted)" }}>
+          <div className="text-sm" style={{ fontFamily: "Lora, serif" }}>Loading your tracked channels…</div>
+        </div>
+      ) : channels.length === 0 ? (
         <div className="flex flex-col items-center justify-center h-48" style={{ color: "var(--text-muted)" }}>
           <div className="text-4xl mb-3">📡</div>
           <div className="text-sm" style={{ fontFamily: "Lora, serif" }}>No competitors tracked yet</div>
@@ -1279,12 +1417,35 @@ function CompetitorRoster({ channels, onChanged }: { channels: Channel[]; onChan
       ) : (
         <div className="flex flex-col gap-2">
           {channels.map(c => (
-            <ChannelCard key={c.id} channel={c} onToggleActive={handleToggleActive} onRemove={handleRemove} />
+            <ChannelCard
+              key={c.id}
+              channel={c}
+              onToggleActive={handleToggleActive}
+              onRemove={handleRemove}
+              pending={pendingIds.has(c.id)}
+              error={rowErrors[c.id]}
+            />
           ))}
         </div>
       )}
     </div>
   );
+}
+
+// ─── Avatar (with broken-image fallback) ───────────────────────────────────────
+// A channel/video's avatarUrl/channelAvatarUrl points straight at YouTube's or
+// Instagram's own CDN (see PRODUCTION_ROADMAP.md's "Thumbnail caching/
+// proxying" note on why that's not proxied through this app) — those URLs do
+// go stale or 404, especially Instagram's, which are already known to expire.
+// A plain <img> with no error handling would just show the browser's own
+// broken-image glyph forever in that case; this swaps to the same initials
+// fallback every call site already uses for "no avatar URL at all", so a
+// dead image degrades to the same clean fallback as a missing one instead of
+// looking broken.
+function Avatar({ url, alt, initials, className }: { url: string | null | undefined; alt: string; initials: React.ReactNode; className: string }) {
+  const [failed, setFailed] = useState(false);
+  if (!url || failed) return <>{initials}</>;
+  return <img src={url} alt={alt} className={className} onError={() => setFailed(true)} />;
 }
 
 // ─── Channel Card ─────────────────────────────────────────────────────────────
@@ -1300,12 +1461,24 @@ function CompetitorRoster({ channels, onChanged }: { channels: Channel[]; onChan
 // one of these per tracked channel, and its own local state (the add-channel
 // form fields, cohort filter, etc.) changes far more often than any given
 // channel's own data.
-const ChannelCard = React.memo(function ChannelCard({ channel: c, onToggleActive, onRemove }: { channel: Channel; onToggleActive: (channel: Channel) => void; onRemove: (id: string) => void }) {
+const ChannelCard = React.memo(function ChannelCard({
+  channel: c,
+  onToggleActive,
+  onRemove,
+  pending,
+  error,
+}: {
+  channel: Channel;
+  onToggleActive: (channel: Channel) => void;
+  onRemove: (id: string) => void;
+  pending?: boolean;
+  error?: string;
+}) {
   return (
     <div className="video-card flex flex-col gap-3 p-3">
       <div className="flex items-center gap-3">
         <div className="flex items-center justify-center rounded-full size-9 shrink-0 text-xs font-bold" style={{ background: "var(--bg-elevated)", color: "var(--accent-light)" }}>
-          {c.avatarUrl ? <img src={c.avatarUrl} alt={c.name} className="size-9 rounded-full object-cover" /> : c.avatar}
+          <Avatar url={c.avatarUrl} alt={c.name} initials={c.avatar} className="size-9 rounded-full object-cover" />
         </div>
         <div className="flex-1 min-w-0">
           <div className="text-sm font-semibold truncate" style={{ color: "var(--text-primary)", fontFamily: "Lora, serif" }}>{c.name}</div>
@@ -1318,13 +1491,29 @@ const ChannelCard = React.memo(function ChannelCard({ channel: c, onToggleActive
             )}
           </div>
         </div>
-        <button onClick={() => onToggleActive(c)} className="text-xs px-2 py-1 rounded-lg shrink-0" style={{ color: "var(--text-muted)", border: "1px solid var(--border)" }}>
-          {c.isActive ? "Pause" : "Resume"}
+        <button
+          onClick={() => onToggleActive(c)}
+          disabled={pending}
+          className="text-xs px-2 py-1 rounded-lg shrink-0 disabled:opacity-50"
+          style={{ color: "var(--text-muted)", border: "1px solid var(--border)" }}
+        >
+          {pending ? "…" : c.isActive ? "Pause" : "Resume"}
         </button>
-        <button onClick={() => onRemove(c.id)} className="flex items-center justify-center rounded-lg size-8 shrink-0 hover-surface" style={{ color: "var(--text-muted)" }}>
+        <button
+          onClick={() => onRemove(c.id)}
+          disabled={pending}
+          className="flex items-center justify-center rounded-lg size-8 shrink-0 hover-surface disabled:opacity-50"
+          style={{ color: "var(--text-muted)" }}
+        >
           <TrashIcon />
         </button>
       </div>
+
+      {error && (
+        <div className="text-xs -mt-2" style={{ color: "var(--tier-danger)" }}>
+          {error}
+        </div>
+      )}
 
       <div className="flex items-center gap-5 flex-wrap pt-2" style={{ borderTop: "1px solid var(--border)" }}>
         <div>
@@ -1483,7 +1672,7 @@ function ChannelStatCard({ channel: c, active, onClick, onClear }: { channel: Ch
       <div className="flex flex-col gap-2 p-3 shrink-0" style={{ width: CHANNEL_CARD_WIDTH }}>
         <div className="flex items-center gap-2">
           <div className="flex items-center justify-center rounded-full size-8 shrink-0 text-[11px] font-bold" style={{ background: "var(--bg-elevated)", color: "var(--accent-light)" }}>
-            {c.avatarUrl ? <img src={c.avatarUrl} alt={c.name} className="size-8 rounded-full object-cover" /> : c.avatar}
+            <Avatar url={c.avatarUrl} alt={c.name} initials={c.avatar} className="size-8 rounded-full object-cover" />
           </div>
           <div className="flex-1 min-w-0">
             <div className="text-xs font-semibold truncate pr-4" style={{ color: "var(--text-primary)", fontFamily: "Lora, serif" }}>{c.name}</div>
@@ -1822,11 +2011,12 @@ function TopicSearchChannelCard({ channel: ch }: { channel: TopicSearchChannelRe
           className="flex items-center justify-center rounded-full size-8 shrink-0 text-[11px] font-bold overflow-hidden"
           style={{ background: "var(--bg-elevated)", color: "var(--accent-light)" }}
         >
-          {ch.channelAvatarUrl ? (
-            <img src={ch.channelAvatarUrl} alt={ch.channelName} className="size-8 rounded-full object-cover" />
-          ) : (
-            ch.channelName.slice(0, 2).toUpperCase()
-          )}
+          <Avatar
+            url={ch.channelAvatarUrl}
+            alt={ch.channelName}
+            initials={ch.channelName.slice(0, 2).toUpperCase()}
+            className="size-8 rounded-full object-cover"
+          />
         </div>
         <div className="flex-1 min-w-0">
           <div className="text-xs font-semibold truncate" style={{ color: "var(--text-primary)", fontFamily: "Lora, serif" }}>{ch.channelName}</div>
@@ -1878,6 +2068,11 @@ const EMPTY_COHORTS: CohortSummary[] = [];
 // of cards rendered at once reasonable regardless of how large the table
 // grows.
 const VIDEOS_PAGE_SIZE = 60;
+
+// How many VideoCardSkeleton placeholders to show while videos are loading —
+// enough to fill a typical viewport without rendering all VIDEOS_PAGE_SIZE
+// (60) of them for a state that's discarded the moment real data arrives.
+const SKELETON_KEYS = Array.from({ length: 8 }, (_, i) => `skeleton-${i}`);
 
 export default function App() {
   const [theme, setTheme] = useState<Theme>(() => getStoredTheme() ?? detectSystemTheme());
@@ -1944,6 +2139,12 @@ export default function App() {
 
   const [notifVideos, setNotifVideos] = useState<Video[]>(EMPTY_VIDEOS);
   const [notifLoading, setNotifLoading] = useState(false);
+  const [notifError, setNotifError] = useState<string | null>(null);
+  // Bumped on every bell-icon open so a stale response from an earlier,
+  // overlapping fetch (rapid open/close/open clicks) can be told apart from
+  // the request that actually matches the panel's current open state — see
+  // openNotifications below.
+  const notifRequestIdRef = useRef(0);
 
   const [refreshing, setRefreshing] = useState(false);
   const [refreshMessage, setRefreshMessage] = useState<{ text: string; kind: "success" | "error" } | null>(null);
@@ -2133,17 +2334,31 @@ export default function App() {
     setNotifOpen(o => {
       const next = !o;
       if (next) {
+        // Rapid clicks on the bell (close it, reopen it before the first
+        // fetch has resolved) used to fire overlapping requests with no way
+        // to tell which one should actually win — whichever happened to
+        // resolve last would overwrite the panel's state, even if it was the
+        // older of the two. Stamping each open with an incrementing id and
+        // only applying the response that still matches the latest id makes
+        // a stale response a no-op instead of a flicker/race.
+        const requestId = ++notifRequestIdRef.current;
         setNotifLoading(true);
+        setNotifError(null);
         // metric: "median" matches the Overperformance page's default (see
         // the initial filters.metric below) and app/routers/system.py's
         // overperformCount, so the bell shows the same videos the badge
         // count is counting rather than silently falling back to average.
         fetchVideos({ platform: "all", channels: [], dateFrom: "", dateTo: "", viewsThreshold: "", format: "all", sortBy: "ratio", metric: "median", limit: 50 })
           .then(result => {
+            if (notifRequestIdRef.current !== requestId) return;
             setNotifVideos(result.videos.filter(v => v.overperformRatioMedian != null && v.overperformRatioMedian >= 2));
             setNotifLoading(false);
           })
-          .catch(() => setNotifLoading(false));
+          .catch(err => {
+            if (notifRequestIdRef.current !== requestId) return;
+            setNotifError(err instanceof ApiError ? err.message : "Could not load this.");
+            setNotifLoading(false);
+          });
       }
       return next;
     });
@@ -2264,14 +2479,20 @@ export default function App() {
                 <BellIcon />
                 <span className="notification-dot" />
               </button>
-              {notifOpen && <NotificationPanel videos={notifVideos} loading={notifLoading} onClose={() => setNotifOpen(false)} />}
+              {notifOpen && <NotificationPanel videos={notifVideos} loading={notifLoading} error={notifError} onClose={() => setNotifOpen(false)} />}
             </div>
           </div>
         </div>
 
         {activeSection === "Add Channel" ? (
           <div className="flex-1 overflow-y-auto">
-            <CompetitorRoster channels={channels} onChanged={refreshChannelsAndCohorts} />
+            <CompetitorRoster
+              channels={channels}
+              onChanged={refreshChannelsAndCohorts}
+              loading={channelsAsync.loading}
+              error={channelsAsync.error}
+              onRetry={channelsAsync.reload}
+            />
           </div>
         ) : activeSection === "Trend Analysis" ? (
           <TopicSearchView
@@ -2306,11 +2527,24 @@ export default function App() {
                   <div className="text-4xl mb-3">⚠️</div>
                   <div className="text-sm" style={{ fontFamily: "Lora, serif" }}>Couldn't load videos</div>
                   <div className="text-xs mt-1">{videosError}</div>
+                  <button
+                    onClick={() => setVideosRefetchTick(t => t + 1)}
+                    className="mt-3 px-3 py-1.5 rounded-lg text-xs font-semibold transition-opacity"
+                    style={{ background: "var(--bg-elevated)", border: "1px solid var(--border)", color: "var(--text-primary)" }}
+                  >
+                    Try again
+                  </button>
                 </div>
               ) : videosLoading ? (
-                <div className="flex flex-col items-center justify-center h-64" style={{ color: "var(--text-muted)" }}>
-                  <div className="text-sm" style={{ fontFamily: "Lora, serif" }}>Loading videos…</div>
-                </div>
+                viewMode === "grid" ? (
+                  <div className="p-5 grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))" }}>
+                    {SKELETON_KEYS.map(k => <VideoCardSkeleton key={k} mode="grid" />)}
+                  </div>
+                ) : (
+                  <div className="p-5 flex flex-col gap-2">
+                    {SKELETON_KEYS.map(k => <VideoCardSkeleton key={k} mode="list" />)}
+                  </div>
+                )
               ) : videos.length === 0 ? (
                 <div className="flex flex-col items-center justify-center h-64" style={{ color: "var(--text-muted)" }}>
                   <div className="text-4xl mb-3">📭</div>

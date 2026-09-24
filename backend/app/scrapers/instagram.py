@@ -63,6 +63,16 @@ from app.overperformance import recompute_and_store_channel_baselines
 
 logger = logging.getLogger(__name__)
 
+# apify_client's ActorClient.call() "waits indefinitely, unless the wait_secs
+# argument is provided" (its own docstring) — a stuck or heavily-throttled
+# actor run (Instagram rate-limiting the actor's own scraping, a bad actor
+# build, etc.) would otherwise hang this call, and everything after it in
+# the same scrape run, forever rather than surfacing as the per-channel
+# error scrape_channel below already knows how to handle. Apify's own free
+# actors typically finish a single-profile run in well under a minute, so
+# five minutes is generous headroom rather than a tight budget.
+APIFY_RUN_WAIT_SECS = 300
+
 
 class ApifyInstagramClient:
     def __init__(self, api_token: str, actor_id: str):
@@ -72,23 +82,42 @@ class ApifyInstagramClient:
         self.actor_id = actor_id
         self.runs_started = 0
 
+    def _run_and_collect(self, run_input: dict[str, Any]) -> list[dict]:
+        """
+        Starts the configured actor and blocks until it finishes or
+        ``APIFY_RUN_WAIT_SECS`` elapses, then returns its dataset items.
+        Raises (a plain ``RuntimeError``, not whatever internal shape Apify
+        used) if the run didn't reach a successful terminal state — a run
+        that's still ``RUNNING`` when the wait bound is hit would otherwise
+        have an incomplete (or entirely empty) dataset read as if it were
+        the channel's real, complete result. The caller (scrape_channel)
+        turns any exception raised here into a per-channel error instead of
+        aborting the whole batch.
+        """
+        run = self._client.actor(self.actor_id).call(run_input=run_input, wait_secs=APIFY_RUN_WAIT_SECS)
+        self.runs_started += 1
+        status = run.get("status") if run else None
+        if status != "SUCCEEDED":
+            raise RuntimeError(
+                f"Apify actor run did not complete successfully within {APIFY_RUN_WAIT_SECS}s "
+                f"(status: {status or 'unknown'})."
+            )
+        dataset_id = run["defaultDatasetId"]
+        return list(self._client.dataset(dataset_id).iterate_items())
+
     def fetch_profile_posts(self, username: str, *, max_posts: int) -> list[dict]:
         """
         Runs the configured actor for one username and returns its dataset
-        items. Blocks until the run finishes (Apify's ``.call()`` polls for
-        you). Raises whatever ``apify_client`` raises on a failed run — the
-        caller (scrape_channel) turns that into a per-channel error instead
-        of aborting the whole batch.
+        items. Raises whatever ``_run_and_collect`` raises on a failed or
+        timed-out run — the caller (scrape_channel) turns that into a
+        per-channel error instead of aborting the whole batch.
         """
         run_input: dict[str, Any] = {
             "directUrls": [f"https://www.instagram.com/{username}/"],
             "resultsType": "posts",
             "resultsLimit": max_posts,
         }
-        run = self._client.actor(self.actor_id).call(run_input=run_input)
-        self.runs_started += 1
-        dataset_id = run["defaultDatasetId"]
-        return list(self._client.dataset(dataset_id).iterate_items())
+        return self._run_and_collect(run_input)
 
     def fetch_posts_by_url(self, urls: list[str]) -> list[dict]:
         """
@@ -106,10 +135,7 @@ class ApifyInstagramClient:
             "resultsType": "posts",
             "resultsLimit": len(urls),
         }
-        run = self._client.actor(self.actor_id).call(run_input=run_input)
-        self.runs_started += 1
-        dataset_id = run["defaultDatasetId"]
-        return list(self._client.dataset(dataset_id).iterate_items())
+        return self._run_and_collect(run_input)
 
 
 # ── Pure parsing ─────────────────────────────────────────────────────────────

@@ -31,6 +31,7 @@ import datetime as dt
 import logging
 from dataclasses import dataclass, field
 
+import httplib2
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from sqlalchemy.orm import Session
@@ -50,6 +51,14 @@ VIDEOS_BATCH_SIZE = 50
 # posts more than 50 videos/day.
 BACKFILL_PAGES = 4
 
+# googleapiclient's default transport (httplib2) has no socket timeout at
+# all unless one is configured — a stalled connection to Google's API would
+# otherwise hang a `.execute()` call (and the whole scrape run behind it,
+# since scrape_channel/scrape_service call these synchronously) forever
+# rather than raising something the per-channel try/except in
+# app/scrape_service.py could catch and move past.
+YOUTUBE_HTTP_TIMEOUT_SECS = 30
+
 
 class YouTubeClient:
     """Thin wrapper around the official googleapiclient YouTube resource."""
@@ -57,7 +66,13 @@ class YouTubeClient:
     def __init__(self, api_key: str):
         if not api_key:
             raise ValueError("YOUTUBE_API_KEY is not set — see backend/.env.example")
-        self._youtube = build("youtube", "v3", developerKey=api_key, cache_discovery=False)
+        self._youtube = build(
+            "youtube",
+            "v3",
+            developerKey=api_key,
+            cache_discovery=False,
+            http=httplib2.Http(timeout=YOUTUBE_HTTP_TIMEOUT_SECS),
+        )
         self.quota_units_used = 0
 
     # -- raw calls, each annotated with its documented quota cost ------------
