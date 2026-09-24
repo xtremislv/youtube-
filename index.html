@@ -4,6 +4,27 @@
     <!-- figma:head-start -->
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!--
+      Google Fonts moved here (as <link>, discovered by the HTML parser
+      immediately) instead of a CSS `@import` inside src/index.css. An
+      `@import` at the top of a stylesheet can't be fetched until the
+      browser has already downloaded and started parsing that stylesheet,
+      so the font CSS request effectively starts a full round-trip late
+      and blocks it behind index.css's own critical CSS. A <link> here is
+      discovered during initial HTML parsing (before any JS or the app's
+      CSS loads) and preconnect warms the cross-origin connection (DNS +
+      TLS) to fonts.gstatic.com in parallel with that, so by the time the
+      font CSS resolves and picks the actual font files, the connection
+      to fetch them is already open. Net effect: fonts (and the text that
+      uses them) can paint sooner, improving FCP/LCP without changing
+      which fonts are used or how they look.
+    -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,600;0,700;1,400&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap"
+    />
     <title><!-- figma:title --></title>
     <!-- figma:head-end -->
   </head>

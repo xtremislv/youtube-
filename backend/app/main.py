@@ -14,6 +14,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 
 from app.config import get_settings
 from app.routers import channels, health, scrape, search, settings as settings_router, system, videos
@@ -45,6 +46,16 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# Transparent to every client (fetch/browsers negotiate and decompress this
+# automatically via Accept-Encoding/Content-Encoding — no frontend change
+# needed) and meaningful here specifically because the two heaviest
+# responses are JSON arrays of near-identical objects: GET /api/videos can
+# return up to 2000 video records and GET /api/channels one per tracked
+# channel, both highly repetitive (the same field names and similar string
+# values over and over), which is exactly what gzip compresses well.
+# minimum_size skips compressing tiny responses (health checks, single-
+# object PATCH results) where gzip's own overhead isn't worth paying.
+app.add_middleware(GZipMiddleware, minimum_size=500)
 
 app.include_router(health.router)
 app.include_router(channels.router)

@@ -1,4 +1,9 @@
-@import url('https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,600;0,700;1,400&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
+/* Google Fonts are loaded from index.html (<link rel="preconnect"> +
+   <link rel="stylesheet">) instead of an `@import` here — see the comment
+   in index.html for why: an `@import` at the top of this file can only be
+   discovered after the browser has already fetched and started parsing
+   index.css itself, serializing two round-trips that a <link> in the HTML
+   lets happen in parallel. */
 @import 'tailwindcss';
 
 html,

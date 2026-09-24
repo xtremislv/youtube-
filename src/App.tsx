@@ -1013,7 +1013,17 @@ function velocityRatioColor(ratio: number | null | undefined): string {
   return "var(--tier-orange)";
 }
 
-function VideoCard({ video, mode, metric = "average" }: { video: Video; mode: ViewMode; metric?: OverperformMetric }) {
+// Wrapped in React.memo: the video grid can render up to VIDEOS_PAGE_SIZE
+// (and more once "Load more" grows it) of these per render, and App()'s own
+// state (notifications, filter-bar UI, theme, etc.) changes far more often
+// than the `videos` array itself does. Without this, every one of those
+// unrelated re-renders re-runs every VideoCard's body (ratio-based color
+// calculation, JSX for two possible layouts) for no visual change — memo
+// skips a card entirely when its own props (video/mode/metric) haven't
+// changed. Trade-off: React does a shallow prop comparison per card on
+// every parent re-render, which costs a little more than doing nothing for
+// the (rare) renders where every card's props really did change.
+const VideoCard = React.memo(function VideoCard({ video, mode, metric = "average" }: { video: Video; mode: ViewMode; metric?: OverperformMetric }) {
   const ratio = metric === "median" ? video.overperformRatioMedian : video.overperformRatio;
   // Used for anything drawn directly on the card's own (theme-adaptive)
   // background — list-mode ratio text, the sparkline. See
@@ -1152,7 +1162,7 @@ function VideoCard({ video, mode, metric = "average" }: { video: Video; mode: Vi
       </div>
     </Wrapper>
   );
-}
+});
 
 // ─── Chart Panel ──────────────────────────────────────────────────────────────
 
@@ -1205,15 +1215,29 @@ function CompetitorRoster({ channels, onChanged }: { channels: Channel[]; onChan
     }
   }
 
-  async function handleRemove(id: string) {
-    await deleteChannel(id);
-    onChanged();
-  }
+  // useCallback (keyed only on `onChanged`, which is itself the stable
+  // refreshChannelsAndCohorts from App()) so these keep the same identity
+  // across CompetitorRoster's own re-renders (e.g. every keystroke in the
+  // add-channel form above). ChannelCard is passed these directly instead
+  // of wrapping them in a fresh per-item arrow function at the .map call
+  // site below — that inline-arrow pattern would hand ChannelCard a new
+  // onToggleActive/onRemove reference on every render regardless, which
+  // defeats ChannelCard's React.memo before it ever gets to compare props.
+  const handleRemove = useCallback(
+    async (id: string) => {
+      await deleteChannel(id);
+      onChanged();
+    },
+    [onChanged],
+  );
 
-  async function handleToggleActive(c: Channel) {
-    await updateChannel(c.id, { isActive: !c.isActive });
-    onChanged();
-  }
+  const handleToggleActive = useCallback(
+    async (c: Channel) => {
+      await updateChannel(c.id, { isActive: !c.isActive });
+      onChanged();
+    },
+    [onChanged],
+  );
 
   return (
     <div className="p-5 max-w-3xl">
@@ -1255,7 +1279,7 @@ function CompetitorRoster({ channels, onChanged }: { channels: Channel[]; onChan
       ) : (
         <div className="flex flex-col gap-2">
           {channels.map(c => (
-            <ChannelCard key={c.id} channel={c} onToggleActive={() => handleToggleActive(c)} onRemove={() => handleRemove(c.id)} />
+            <ChannelCard key={c.id} channel={c} onToggleActive={handleToggleActive} onRemove={handleRemove} />
           ))}
         </div>
       )}
@@ -1272,7 +1296,11 @@ function CompetitorRoster({ channels, onChanged }: { channels: Channel[]; onChan
 // "—" for them rather than 0, since 0 avg views would misleadingly read as
 // "this channel underperforms" instead of "no data yet".
 
-function ChannelCard({ channel: c, onToggleActive, onRemove }: { channel: Channel; onToggleActive: () => void; onRemove: () => void }) {
+// Memoized for the same reason as VideoCard above — CompetitorRoster maps
+// one of these per tracked channel, and its own local state (the add-channel
+// form fields, cohort filter, etc.) changes far more often than any given
+// channel's own data.
+const ChannelCard = React.memo(function ChannelCard({ channel: c, onToggleActive, onRemove }: { channel: Channel; onToggleActive: (channel: Channel) => void; onRemove: (id: string) => void }) {
   return (
     <div className="video-card flex flex-col gap-3 p-3">
       <div className="flex items-center gap-3">
@@ -1290,10 +1318,10 @@ function ChannelCard({ channel: c, onToggleActive, onRemove }: { channel: Channe
             )}
           </div>
         </div>
-        <button onClick={onToggleActive} className="text-xs px-2 py-1 rounded-lg shrink-0" style={{ color: "var(--text-muted)", border: "1px solid var(--border)" }}>
+        <button onClick={() => onToggleActive(c)} className="text-xs px-2 py-1 rounded-lg shrink-0" style={{ color: "var(--text-muted)", border: "1px solid var(--border)" }}>
           {c.isActive ? "Pause" : "Resume"}
         </button>
-        <button onClick={onRemove} className="flex items-center justify-center rounded-lg size-8 shrink-0 hover-surface" style={{ color: "var(--text-muted)" }}>
+        <button onClick={() => onRemove(c.id)} className="flex items-center justify-center rounded-lg size-8 shrink-0 hover-surface" style={{ color: "var(--text-muted)" }}>
           <TrashIcon />
         </button>
       </div>
@@ -1321,7 +1349,7 @@ function ChannelCard({ channel: c, onToggleActive, onRemove }: { channel: Channe
       </div>
     </div>
   );
-}
+});
 
 // ─── Channel Stat Card (Overperformance strip) ─────────────────────────────────
 // A compact, read-only cousin of ChannelCard above — sits in a horizontally
@@ -1340,6 +1368,13 @@ function ChannelCard({ channel: c, onToggleActive, onRemove }: { channel: Channe
 const CHANNEL_CARD_WIDTH = 216;
 const VELOCITY_PANEL_WIDTH = 300;
 
+// Memoized for the same reason as VideoCard/ChannelCard above. Note this
+// only helps for the (common) case where this card's own props didn't
+// change — see the visibleChannels.map call site: onClick/onClear are
+// still recreated per render there, so a change to *this* channel's active
+// state still re-renders every card in the strip once; memo mainly pays off
+// by skipping the (more frequent) re-renders that come from unrelated state
+// elsewhere in App() rather than from anything in this strip changing.
 function ChannelStatCard({ channel: c, active, onClick, onClear }: { channel: Channel; active: boolean; onClick: () => void; onClear: () => void }) {
   // Selecting a channel (the existing click-to-filter behavior below is
   // unchanged) is also what expands it — "active" already means "the one
@@ -1991,22 +2026,33 @@ export default function App() {
   // a client-side useMemo, since it needs to scale past a hardcoded array.
   useEffect(() => {
     let cancelled = false;
+    // AbortController, in addition to the `cancelled` flag below: `cancelled`
+    // only stops a superseded response from being *applied*, but the request
+    // it came from still ran to completion on the backend regardless (three
+    // separate DB queries per app/routers/videos.py). Aborting the underlying
+    // fetch means a filter change that lands after this request has already
+    // started (the 300ms debounce below has already elapsed) actually cancels
+    // that in-flight request instead of just discarding its result.
+    const controller = new AbortController();
     setVideosLoading(true);
     setVideosError(null);
     const handle = window.setTimeout(() => {
-      fetchVideos({
-        platform: filters.platform,
-        channels: filters.channels,
-        dateFrom: filters.dateFrom,
-        dateTo: filters.dateTo,
-        viewsThreshold: filters.viewsThreshold,
-        format: filters.format,
-        sortBy: filters.sortBy,
-        metric: filters.metric,
-        hasSponsor: filters.sponsoredOnly ? true : undefined,
-        limit: VIDEOS_PAGE_SIZE,
-        offset: 0,
-      })
+      fetchVideos(
+        {
+          platform: filters.platform,
+          channels: filters.channels,
+          dateFrom: filters.dateFrom,
+          dateTo: filters.dateTo,
+          viewsThreshold: filters.viewsThreshold,
+          format: filters.format,
+          sortBy: filters.sortBy,
+          metric: filters.metric,
+          hasSponsor: filters.sponsoredOnly ? true : undefined,
+          limit: VIDEOS_PAGE_SIZE,
+          offset: 0,
+        },
+        { signal: controller.signal },
+      )
         .then(result => {
           // Same stale-response guard ChannelStatCard's velocity fetch
           // already uses: without it, two filter changes fired less than
@@ -2026,6 +2072,7 @@ export default function App() {
     return () => {
       cancelled = true;
       window.clearTimeout(handle);
+      controller.abort();
     };
   }, [filters, videosRefetchTick]);
 

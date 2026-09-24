@@ -41,21 +41,28 @@ def _median_views_last_10_by_channel(db: Session) -> dict[str, float]:
     channel or an Instagram profile, since it only looks at published_at
     and views). Backs the channel card's "Median (last 10)" stat.
 
-    Done in Python rather than a single SQL aggregate: getting "the last 10
-    rows per group" needs a ROW_NUMBER()-style window, and a median needs
-    percentile_cont — support/behavior for both differs between the
-    Postgres this runs against in prod and the SQLite the test suite uses,
-    so pulling the (channel_id, views, published_at) rows and doing the
-    windowing + median in Python keeps this identical on both.
+    The "last 10 rows per group" half of this is pushed into SQL via a
+    ROW_NUMBER() window (supported identically by the Postgres this runs
+    against in prod and the SQLite the test suite uses, both new enough to
+    have it) so this only ever pulls at most 10 rows per channel back to
+    Python, instead of every video row in the whole table — this used to
+    run an unfiltered `Video.channel_id, Video.views, Video.published_at`
+    query with no LIMIT at all, on every GET /api/channels, so its cost grew
+    with the *entire* videos table regardless of how many channels or
+    videos-per-channel actually mattered for the answer.
+
+    The median itself stays a Python `statistics.median` call rather than
+    also pushing it into SQL: a median needs `percentile_cont`, whose
+    behavior/support differs between Postgres and SQLite, and by this point
+    there are at most 10 rows per channel to run it over, so doing it in
+    Python is both simpler and no longer a meaningful cost.
     """
-    rows = db.query(Video.channel_id, Video.views, Video.published_at).order_by(
-        Video.channel_id, Video.published_at.desc()
-    ).all()
+    row_number = func.row_number().over(partition_by=Video.channel_id, order_by=Video.published_at.desc())
+    ranked = db.query(Video.channel_id.label("channel_id"), Video.views.label("views"), row_number.label("rn")).subquery()
+    rows = db.query(ranked.c.channel_id, ranked.c.views).filter(ranked.c.rn <= 10).all()
     by_channel: dict[str, list[int]] = defaultdict(list)
-    for channel_id, views, _published_at in rows:
-        bucket = by_channel[channel_id]
-        if len(bucket) < 10:
-            bucket.append(views)
+    for channel_id, views in rows:
+        by_channel[channel_id].append(views)
     return {channel_id: statistics.median(views_list) for channel_id, views_list in by_channel.items() if views_list}
 
 

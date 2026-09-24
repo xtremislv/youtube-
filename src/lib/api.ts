@@ -182,6 +182,20 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+/**
+ * A fetch a caller may want to abort mid-flight — currently just
+ * fetchVideos, whose callers (App.tsx's filter-change effect,
+ * ChannelStatCard's velocity panel) can fire a new request before an
+ * earlier one has finished. Passing `signal` lets `fetch` itself tear down
+ * the in-flight request instead of merely ignoring its response: without
+ * it, a superseded request still runs to completion server-side (three DB
+ * queries in /api/videos, per app/routers/videos.py) purely to have its
+ * result thrown away client-side.
+ */
+export interface RequestOptions {
+  signal?: AbortSignal;
+}
+
 export function fetchChannels(platform?: Platform): Promise<ApiChannel[]> {
   const params = platform && platform !== "all" ? `?platform=${platform}` : "";
   return request<ApiChannel[]>(`/api/channels${params}`);
@@ -213,7 +227,7 @@ export function deleteChannel(id: string): Promise<void> {
   return request<void>(`/api/channels/${encodeURIComponent(id)}`, { method: "DELETE" });
 }
 
-export function fetchVideos(query: VideoQuery): Promise<VideoListResult> {
+export function fetchVideos(query: VideoQuery, options?: RequestOptions): Promise<VideoListResult> {
   const params = new URLSearchParams();
   if (query.platform !== "all") params.set("platform", query.platform);
   for (const id of query.channels) params.append("channels", id);
@@ -226,7 +240,7 @@ export function fetchVideos(query: VideoQuery): Promise<VideoListResult> {
   if (query.hasSponsor !== undefined) params.set("has_sponsor", String(query.hasSponsor));
   if (query.limit) params.set("limit", String(query.limit));
   if (query.offset) params.set("offset", String(query.offset));
-  return request<VideoListResult>(`/api/videos?${params.toString()}`);
+  return request<VideoListResult>(`/api/videos?${params.toString()}`, { signal: options?.signal });
 }
 
 export function fetchSystemStatus(): Promise<SystemStatus> {

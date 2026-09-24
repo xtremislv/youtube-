@@ -16,7 +16,7 @@ from __future__ import annotations
 from datetime import date
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import case, or_
+from sqlalchemy import case, func, or_
 from sqlalchemy.orm import Session, joinedload
 
 from app.config import Settings
@@ -120,8 +120,19 @@ def list_videos(
     elif has_sponsor is False:
         query = query.filter(Video.sponsor_checked_at.is_not(None), Video.has_sponsor_segment.is_(False))
 
-    total = query.count()
-    overperform_count = query.filter(ratio_column.is_not(None), ratio_column >= threshold).count()
+    # One round trip instead of two: `total` and `overperform_count` used to
+    # be separate `query.count()` calls, each re-running the whole filtered
+    # query (identical WHERE clauses, including the joinedload'd join) just
+    # to get a different aggregate. A single conditional-count query returns
+    # both — same result, half the round trips to the DB for every page load
+    # of the main dashboard grid.
+    total, overperform_count = query.with_entities(
+        func.count(),
+        func.coalesce(
+            func.sum(case((ratio_column.is_not(None) & (ratio_column >= threshold), 1), else_=0)),
+            0,
+        ),
+    ).one()
 
     if sort_by not in SORT_COLUMNS:
         sort_by = "ratio"
