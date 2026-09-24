@@ -8,7 +8,6 @@ regardless of what fired it.
 
 from __future__ import annotations
 
-import datetime as dt
 import logging
 
 from sqlalchemy.orm import Session
@@ -16,6 +15,7 @@ from sqlalchemy.orm import Session
 from app.config import Settings
 from app.models import Channel, ScrapeRun
 from app.settings_service import get_workspace_settings
+from app.timeutil import utcnow
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +49,7 @@ def run_daily_scrape(db: Session, settings: Settings, *, platform: str | None = 
 
 
 def _skipped_run(db: Session, platform: str, reason: str) -> ScrapeRun:
-    now = dt.datetime.utcnow()
+    now = utcnow()
     run = ScrapeRun(platform=platform, status="skipped", started_at=now, finished_at=now, error_message=reason)
     db.add(run)
     db.commit()
@@ -58,7 +58,7 @@ def _skipped_run(db: Session, platform: str, reason: str) -> ScrapeRun:
 
 
 def _scrape_platform(db: Session, settings: Settings, platform: str) -> ScrapeRun:
-    run = ScrapeRun(platform=platform, status="running", started_at=dt.datetime.utcnow())
+    run = ScrapeRun(platform=platform, status="running", started_at=utcnow())
     db.add(run)
     db.commit()
     db.refresh(run)
@@ -67,7 +67,7 @@ def _scrape_platform(db: Session, settings: Settings, platform: str) -> ScrapeRu
 
     if not channels:
         run.status = "success"
-        run.finished_at = dt.datetime.utcnow()
+        run.finished_at = utcnow()
         db.commit()
         return run
 
@@ -81,7 +81,7 @@ def _scrape_platform(db: Session, settings: Settings, platform: str) -> ScrapeRu
         logger.exception("Scrape run failed for platform=%s", platform)
         errors.append(str(exc))
 
-    run.finished_at = dt.datetime.utcnow()
+    run.finished_at = utcnow()
     run.status = "failed" if not run.channels_processed else ("partial" if errors else "success")
     run.error_message = "; ".join(errors)[:4000] if errors else None
     db.commit()

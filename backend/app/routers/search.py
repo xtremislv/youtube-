@@ -29,6 +29,7 @@ from app.deps import settings_dep
 from app.models import ScrapeRun, TopicSearchCache
 from app.quota import get_quota_used_today
 from app.schemas import TopicSearchChannelResult, TopicSearchRequest, TopicSearchResult
+from app.timeutil import ensure_aware_utc, utcnow
 from app.topic_search import TopicSearchOutcome, estimate_quota_cost, get_cached_search
 
 router = APIRouter(prefix="/api/search", tags=["search"])
@@ -72,7 +73,7 @@ def _resolve_filters(payload: TopicSearchRequest, settings: Settings) -> tuple[i
     # gets the old fixed-lookback behavior rather than an unbounded (and
     # much more expensive/lower-quality) all-time search by accident.
     if payload.date_from is None and payload.date_to is None:
-        date_from = dt.datetime.now(dt.timezone.utc).date() - dt.timedelta(days=settings.search_lookback_days)
+        date_from = utcnow().date() - dt.timedelta(days=settings.search_lookback_days)
 
     if date_from is not None and date_to is not None and date_from > date_to:
         raise HTTPException(status_code=400, detail="date_from must not be after date_to.")
@@ -141,10 +142,8 @@ def search_topic(
     # separate lookup, since there's always exactly zero or one row there.
     cache = db.get(TopicSearchCache, 1)
     if cache is not None:
-        searched_at = cache.searched_at
-        if searched_at.tzinfo is None:
-            searched_at = searched_at.replace(tzinfo=dt.timezone.utc)
-        now = dt.datetime.now(dt.timezone.utc)
+        searched_at = ensure_aware_utc(cache.searched_at)
+        now = utcnow()
         elapsed_seconds = (now - searched_at).total_seconds()
         remaining_seconds = settings.topic_search_cooldown_seconds - elapsed_seconds
         if remaining_seconds > 0:
@@ -169,7 +168,7 @@ def search_topic(
             ),
         )
 
-    run = ScrapeRun(platform="youtube_search", started_at=dt.datetime.utcnow(), status="running")
+    run = ScrapeRun(platform="youtube_search", started_at=utcnow(), status="running")
     db.add(run)
     db.commit()
     db.refresh(run)
@@ -198,14 +197,14 @@ def search_topic(
         # bare stack trace — matches /api/scrape/check-velocity's handling.
         db.rollback()
         run.status = "failed"
-        run.finished_at = dt.datetime.utcnow()
+        run.finished_at = utcnow()
         run.error_message = str(exc)[:4000]
         db.commit()
         logger.exception("Topic search failed for query=%r", query)
         raise HTTPException(status_code=502, detail=f"Topic search failed: {exc}") from exc
 
     run.status = "success"
-    run.finished_at = dt.datetime.utcnow()
+    run.finished_at = utcnow()
     run.youtube_quota_units_used = outcome.youtube_quota_units_used
     db.commit()
 

@@ -180,6 +180,7 @@ def check_and_store_sponsor_segments(
     method so this can be verified without hitting the network.
     """
     from app.models import Video  # local import: mirrors overperformance.py's pattern, keeps this DB-import-free for pure unit tests
+    from app.timeutil import ensure_aware_utc, utcnow
 
     if not settings.sponsorblock_enabled:
         return 0
@@ -191,7 +192,7 @@ def check_and_store_sponsor_segments(
     sb_client = client or SponsorBlockClient(settings.sponsorblock_api_base)
     checked = 0
     try:
-        cutoff = dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=settings.sponsorblock_recheck_hours)
+        cutoff = utcnow() - dt.timedelta(hours=settings.sponsorblock_recheck_hours)
         for video_id in video_ids:
             video = db.get(Video, video_id)
             if video is None or video.platform != "youtube":
@@ -201,13 +202,11 @@ def check_and_store_sponsor_segments(
             if checked_at is not None:
                 # Postgres hands back a tz-aware datetime for a
                 # DateTime(timezone=True) column; SQLite (tests) always
-                # hands back naive regardless of column type — coerce to
-                # aware-UTC before comparing so this never raises "can't
-                # compare offset-naive and offset-aware datetimes" (see the
-                # identical fix in routers/scrape.py).
-                if checked_at.tzinfo is None:
-                    checked_at = checked_at.replace(tzinfo=dt.timezone.utc)
-                if checked_at >= cutoff:
+                # hands back naive regardless of column type —
+                # ensure_aware_utc() coerces before comparing so this never
+                # raises "can't compare offset-naive and offset-aware
+                # datetimes" (see app/timeutil.py).
+                if ensure_aware_utc(checked_at) >= cutoff:
                     continue
 
             # Budget is only spent here, right before an actual network
@@ -233,7 +232,7 @@ def check_and_store_sponsor_segments(
             summary = parse_segments(raw_segments, set(categories))
             video.has_sponsor_segment = summary.has_sponsor
             video.sponsor_segment_seconds = summary.sponsor_seconds if summary.has_sponsor else None
-            video.sponsor_checked_at = dt.datetime.utcnow()
+            video.sponsor_checked_at = utcnow()
     finally:
         if owns_client:
             sb_client.close()

@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useRef, useEffect, useCallback } from "react";
 import svgPaths from "imports/svg-siexpc9d1x";
+import { useAsync } from "@/hooks/useAsync";
 import {
   fetchChannels,
   fetchCohorts,
@@ -718,21 +719,28 @@ interface Filters {
 // the Home button (see setActiveSection/setFilters in App()) so "go home"
 // reliably means the exact same thing both times, not just "whatever the
 // useState literal happened to say". Date range defaults to the last 3
-// days (computed fresh from "now" at load time via presetToRange, same as
+// days, computed fresh via presetToRange every time this is called (same as
 // picking "Last 3 days" from the dropdown by hand) rather than "All time",
 // so the dashboard opens onto what's recent instead of the entire history.
-const DEFAULT_FILTERS: Filters = {
-  platform: "all",
-  channels: [],
-  datePreset: "3d",
-  ...presetToRange("3d"),
-  viewsThreshold: "",
-  sortBy: "ratio",
-  metric: "median",
-  showChart: false,
-  format: "all",
-  sponsoredOnly: false,
-};
+// A function rather than a frozen module-level constant: this dashboard is
+// the kind of tab people leave open for a long time, and a value computed
+// once when the module first loaded would make the Home button's "last 3
+// days" silently drift from the actual last 3 days the longer the tab
+// stays open.
+function getDefaultFilters(): Filters {
+  return {
+    platform: "all",
+    channels: [],
+    datePreset: "3d",
+    ...presetToRange("3d"),
+    viewsThreshold: "",
+    sortBy: "ratio",
+    metric: "median",
+    showChart: false,
+    format: "all",
+    sponsoredOnly: false,
+  };
+}
 
 // Which format values make sense for a given platform, and their label —
 // YouTube channels are only ever "long" or "short" (see
@@ -1555,8 +1563,16 @@ type TrendRegion = "IN" | "GLOBAL";
 
 function TopicSearchView({ quotaBudget, quotaUsedToday }: { quotaBudget: number | null; quotaUsedToday: number | null }) {
   const [query, setQuery] = useState("");
-  const [result, setResult] = useState<TopicSearchResult | null>(null);
-  const [initialLoading, setInitialLoading] = useState(true);
+  // The page-reload path — see fetchLatestTopicSearch's docstring — reuses
+  // useAsync (see src/hooks/useAsync.ts) rather than a hand-rolled
+  // fetch+loading useEffect; its error is intentionally left unread here,
+  // same as before this used the shared hook: a failed initial load falls
+  // through to the "no searches yet" empty state exactly as it always did.
+  const {
+    data: result,
+    setData: setResult,
+    loading: initialLoading,
+  } = useAsync(fetchLatestTopicSearch, [], null as TopicSearchResult | null);
   const [searching, setSearching] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -1568,13 +1584,6 @@ function TopicSearchView({ quotaBudget, quotaUsedToday }: { quotaBudget: number 
   const [datePreset, setDatePreset] = useState<DatePreset>("1m");
   const [dateRange, setDateRange] = useState(() => presetToRange("1m"));
   const [region, setRegion] = useState<TrendRegion>("IN");
-
-  useEffect(() => {
-    fetchLatestTopicSearch()
-      .then(setResult)
-      .catch(() => {})
-      .finally(() => setInitialLoading(false));
-  }, []);
 
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1822,6 +1831,8 @@ function TopicSearchChannelCard({ channel: ch }: { channel: TopicSearchChannelRe
 // ─── Main App ─────────────────────────────────────────────────────────────────
 
 const EMPTY_VIDEOS: Video[] = [];
+const EMPTY_CHANNELS: Channel[] = [];
+const EMPTY_COHORTS: CohortSummary[] = [];
 
 // How many videos one page fetches. The backend caps a single request at
 // 2000 (see backend/app/routers/videos.py) and previously the frontend
@@ -1876,11 +1887,19 @@ export default function App() {
   const [viewMode, setViewMode] = useState<ViewMode>("grid");
   const notifRef = useRef<HTMLDivElement>(null);
 
-  const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
+  const [filters, setFilters] = useState<Filters>(getDefaultFilters);
 
-  const [channels, setChannels] = useState<Channel[]>([]);
-  const [cohorts, setCohorts] = useState<CohortSummary[]>([]);
-  const [systemStatus, setSystemStatus] = useState<SystemStatus | null>(null);
+  // These three (plus scraperSettings below) used to be a plain useState
+  // each, all populated by hand-rolled `fetchX().then(setX).catch(() => {})`
+  // calls inside refreshChannelsAndCohorts — useAsync (src/hooks/useAsync.ts)
+  // consolidates that repeated shape into one implementation, reused here
+  // and by TopicSearchView's initial load.
+  const channelsAsync = useAsync(fetchChannels, [], EMPTY_CHANNELS);
+  const cohortsAsync = useAsync(fetchCohorts, [], EMPTY_COHORTS);
+  const systemStatusAsync = useAsync(fetchSystemStatus, [], null as SystemStatus | null);
+  const channels = channelsAsync.data;
+  const cohorts = cohortsAsync.data;
+  const systemStatus = systemStatusAsync.data;
 
   const [videos, setVideos] = useState<Video[]>(EMPTY_VIDEOS);
   const [videosTotal, setVideosTotal] = useState(0);
@@ -1897,15 +1916,20 @@ export default function App() {
 
   // The sidebar's "Apify Usage" toggle — null until the first load resolves,
   // so ToggleSwitch can stay disabled rather than flash a wrong default.
-  const [scraperSettings, setScraperSettings] = useState<ScraperSettings | null>(null);
+  // Also updated directly by handleToggleInstagramScraping below (from the
+  // toggle's own mutation call, not a refetch), hence useAsync's setData
+  // escape hatch here rather than just its data/reload.
+  const scraperSettingsAsync = useAsync(fetchScraperSettings, [], null as ScraperSettings | null);
+  const scraperSettings = scraperSettingsAsync.data;
+  const setScraperSettings = scraperSettingsAsync.setData;
   const [togglingScraper, setTogglingScraper] = useState(false);
 
   const refreshChannelsAndCohorts = useCallback(() => {
-    fetchChannels().then(setChannels).catch(() => {});
-    fetchCohorts().then(setCohorts).catch(() => {});
-    fetchSystemStatus().then(setSystemStatus).catch(() => {});
-    fetchScraperSettings().then(setScraperSettings).catch(() => {});
-  }, []);
+    channelsAsync.reload();
+    cohortsAsync.reload();
+    systemStatusAsync.reload();
+    scraperSettingsAsync.reload();
+  }, [channelsAsync.reload, cohortsAsync.reload, systemStatusAsync.reload, scraperSettingsAsync.reload]);
 
   const handleToggleInstagramScraping = useCallback(async () => {
     if (!scraperSettings || togglingScraper) return;
@@ -1955,16 +1979,18 @@ export default function App() {
     }
   }, [refreshing, refreshChannelsAndCohorts]);
 
-  // Initial load.
-  useEffect(() => {
-    refreshChannelsAndCohorts();
-  }, [refreshChannelsAndCohorts]);
+  // No separate "initial load" effect needed here — each of the four
+  // useAsync hooks above (channelsAsync/cohortsAsync/systemStatusAsync/
+  // scraperSettingsAsync) already fetches once on mount by itself.
+  // refreshChannelsAndCohorts is for the explicit re-fetch paths: the
+  // manual refresh button and CompetitorRoster's onChanged below.
 
   // Re-fetch videos whenever a filter changes. Debounced so typing in the
   // "min views" box doesn't fire a request per keystroke — filtering now
   // happens server-side (see backend/app/routers/videos.py) rather than in
   // a client-side useMemo, since it needs to scale past a hardcoded array.
   useEffect(() => {
+    let cancelled = false;
     setVideosLoading(true);
     setVideosError(null);
     const handle = window.setTimeout(() => {
@@ -1982,16 +2008,25 @@ export default function App() {
         offset: 0,
       })
         .then(result => {
+          // Same stale-response guard ChannelStatCard's velocity fetch
+          // already uses: without it, two filter changes fired less than
+          // 300ms apart can have their responses arrive out of order and
+          // the older one would silently overwrite the newer one's results.
+          if (cancelled) return;
           setVideos(result.videos);
           setVideosTotal(result.total);
           setVideosLoading(false);
         })
         .catch(err => {
+          if (cancelled) return;
           setVideosError(err instanceof ApiError ? err.message : "Could not load videos.");
           setVideosLoading(false);
         });
     }, 300);
-    return () => window.clearTimeout(handle);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(handle);
+    };
   }, [filters, videosRefetchTick]);
 
   // "Load more" button below the grid — fetches the next VIDEOS_PAGE_SIZE
@@ -2094,7 +2129,7 @@ export default function App() {
               style={{ color: "var(--text-muted)", border: "1px solid var(--border)" }}>
               <MenuIcon />
             </button>
-            <button onClick={() => { setActiveSection("Overperformance"); setFilters(DEFAULT_FILTERS); setViewMode("grid"); }}
+            <button onClick={() => { setActiveSection("Overperformance"); setFilters(getDefaultFilters()); setViewMode("grid"); }}
               title="Home — back to Overperformance with every filter cleared"
               className="flex items-center justify-center rounded-lg size-8 transition-colors hover-surface"
               style={{

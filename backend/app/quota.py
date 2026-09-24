@@ -20,12 +20,17 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.models import ScrapeRun
+from app.timeutil import utcnow
 
 QUOTA_SPENDING_PLATFORMS = ("youtube", "youtube_search")
 
 
 def get_quota_used_today(db: Session) -> int:
-    today_start = dt.datetime.combine(dt.date.today(), dt.time.min)
+    # utcnow() rather than the local-timezone dt.date.today() this used to
+    # read, so "today" always means the same UTC day the GitHub Actions
+    # cron schedule and YouTube's own quota reset are anchored to,
+    # regardless of the host's configured timezone (see app/timeutil.py).
+    today_start = dt.datetime.combine(utcnow().date(), dt.time.min, tzinfo=dt.timezone.utc)
     return (
         db.query(func.coalesce(func.sum(ScrapeRun.youtube_quota_units_used), 0))
         .filter(ScrapeRun.platform.in_(QUOTA_SPENDING_PLATFORMS), ScrapeRun.started_at >= today_start)

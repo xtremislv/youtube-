@@ -37,6 +37,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
+from app.timeutil import utcnow
 
 
 class Channel(Base):
@@ -55,9 +56,9 @@ class Channel(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=dt.datetime.utcnow)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[dt.datetime] = mapped_column(
-        DateTime(timezone=True), default=dt.datetime.utcnow, onupdate=dt.datetime.utcnow
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
     )
 
     videos: Mapped[list["Video"]] = relationship(back_populates="channel", cascade="all, delete-orphan")
@@ -131,9 +132,9 @@ class Video(Base):
     h6_ratio: Mapped[float | None] = mapped_column(Float, nullable=True)
     velocity_checked_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
-    first_seen_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=dt.datetime.utcnow)
+    first_seen_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     scraped_at: Mapped[dt.datetime] = mapped_column(
-        DateTime(timezone=True), default=dt.datetime.utcnow, onupdate=dt.datetime.utcnow
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
     )
 
     channel: Mapped["Channel"] = relationship(back_populates="videos")
@@ -170,7 +171,7 @@ class VideoVelocitySnapshot(Base):
     likes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     comments: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
-    captured_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=dt.datetime.utcnow)
+    captured_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     # Actual elapsed time since publish at the moment of capture — rarely
     # exactly `checkpoint_hours` on the nose, since checks only happen on
     # the hourly cron's cadence, not the instant a video crosses a mark.
@@ -190,7 +191,7 @@ class ScrapeRun(Base):
     platform: Mapped[str] = mapped_column(String(16), nullable=False)
     channel_id: Mapped[str | None] = mapped_column(String, nullable=True)  # null = "whole platform" run
 
-    started_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=dt.datetime.utcnow)
+    started_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     finished_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     status: Mapped[str] = mapped_column(String(16), default="running")  # running|success|partial|failed
 
@@ -220,7 +221,7 @@ class WorkspaceSettings(Base):
     # just the dashboard button, without touching YouTube scraping.
     instagram_scraping_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     updated_at: Mapped[dt.datetime] = mapped_column(
-        DateTime(timezone=True), default=dt.datetime.utcnow, onupdate=dt.datetime.utcnow
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
     )
 
 

@@ -130,6 +130,7 @@ def recompute_and_store_channel_velocity_baselines(db: "Session", channel_id: st
     contract as recompute_and_store_channel_baselines.
     """
     from app.models import Video  # local import: keeps this module DB-import-free for pure unit tests
+    from app.timeutil import ensure_aware_utc
 
     checkpoints = settings.velocity_checkpoint_hours_list
     if not checkpoints:
@@ -152,12 +153,12 @@ def recompute_and_store_channel_velocity_baselines(db: "Session", channel_id: st
             # feature), so it never actually enters a trailing window; this
             # is just enough of a sort key to not crash.
             published_ts = dt.datetime.combine(v.published_at, dt.time.min, tzinfo=dt.timezone.utc)
-        elif published_ts.tzinfo is None:
+        else:
             # Postgres hands back aware datetimes for this column; SQLite
             # (tests) always hands back naive ones regardless of column type
-            # — same coercion used throughout this project (see
-            # routers/scrape.py, app/sponsorblock.py).
-            published_ts = published_ts.replace(tzinfo=dt.timezone.utc)
+            # — ensure_aware_utc() is the same coercion used throughout this
+            # project (see app/timeutil.py).
+            published_ts = ensure_aware_utc(published_ts)
 
         inputs.append(VelocityVideoInput(id=v.id, format=v.format, published_at=published_ts, checkpoint_views=checkpoint_views))
 
@@ -216,6 +217,7 @@ def capture_velocity_snapshots(
     overperformance testing pattern.
     """
     from app.models import Video, VideoVelocitySnapshot  # local import: keeps this module DB-import-free for pure unit tests
+    from app.timeutil import ensure_aware_utc, utcnow
 
     stats = VelocityCheckStats()
 
@@ -223,7 +225,7 @@ def capture_velocity_snapshots(
     if not checkpoints:
         return stats
     grace = settings.velocity_checkpoint_grace_hours
-    now = dt.datetime.now(dt.timezone.utc)
+    now = utcnow()
 
     # No SQL-side date filter here on purpose: comparing a tz-aware Python
     # datetime against a DateTime(timezone=True) column mixes badly with
@@ -243,9 +245,7 @@ def capture_velocity_snapshots(
 
     open_videos: list[tuple[Video, float]] = []
     for v in candidates:
-        published = v.published_at_ts
-        if published.tzinfo is None:
-            published = published.replace(tzinfo=dt.timezone.utc)
+        published = ensure_aware_utc(v.published_at_ts)
         hours_since = (now - published).total_seconds() / 3600
         if hours_since < 0:
             continue  # clock skew / not actually published yet — skip rather than error

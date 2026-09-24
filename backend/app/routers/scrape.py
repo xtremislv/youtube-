@@ -30,7 +30,6 @@ Two ways to trigger a run, with two different guards:
 
 from __future__ import annotations
 
-import datetime as dt
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -42,6 +41,7 @@ from app.deps import require_scrape_api_key, settings_dep
 from app.models import ScrapeRun
 from app.schemas import ScrapeRunOut, ScrapeTriggerResponse, VelocityCheckResponse
 from app.scrape_service import run_daily_scrape
+from app.timeutil import ensure_aware_utc, utcnow
 
 router = APIRouter(prefix="/api/scrape", tags=["scrape"])
 logger = logging.getLogger(__name__)
@@ -79,12 +79,10 @@ def trigger_manual_scrape(
         # reads started_at back as timezone-aware — but the sqlite used by
         # the test suite always hands back naive datetimes regardless of
         # column type, and older rows may predate this fix either way.
-        # Coerce to aware-UTC on both sides so the subtraction never raises
-        # "can't subtract offset-naive and offset-aware datetimes".
-        started_at = last_run.started_at
-        if started_at.tzinfo is None:
-            started_at = started_at.replace(tzinfo=dt.timezone.utc)
-        now = dt.datetime.now(dt.timezone.utc)
+        # ensure_aware_utc() coerces both sides so the subtraction never
+        # raises "can't subtract offset-naive and offset-aware datetimes".
+        started_at = ensure_aware_utc(last_run.started_at)
+        now = utcnow()
         elapsed_seconds = (now - started_at).total_seconds()
         remaining_seconds = settings.manual_scrape_cooldown_seconds - elapsed_seconds
         if remaining_seconds > 0:
