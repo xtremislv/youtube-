@@ -16,6 +16,26 @@ Same split as scrapers/youtube.py: ``ApifyInstagramClient`` is the only
 thing that talks to the network; ``normalize_instagram_item`` is a pure
 function tests can feed realistic sample JSON without any credentials.
 
+Two-call refresh pattern (mirrors scrapers/youtube.py's playlistItems.list
++ videos.list split): ``fetch_profile_posts`` discovers whatever's
+currently in the account's most recent ``apify_max_posts_per_channel``
+timeline items, but that alone would let an older tracked reel's view
+count go permanently stale the moment it ages out of that window — an
+account that posts a lot of photos between reels can push a reel out of a
+30-item window well before the overperformance baseline's trailing
+``baseline_window_videos`` (default 10) is done needing fresh numbers from
+it, and Instagram views (like YouTube's) keep accruing for weeks after
+publish, not just on day one. ``scrape_channel`` below closes that gap
+with a second, targeted call — ``fetch_posts_by_url`` — that re-fetches
+current stats for specifically the channel's most-recently-published
+tracked reels that the discovery batch didn't already cover, by passing
+their known post URLs straight to the same actor's ``directUrls`` input
+(confirmed to accept individual ``/p/`` and ``/reel/`` URLs, not just
+profile URLs). It's skipped entirely when discovery already covered
+everything the baseline window needs, which is the common case for
+reel-heavy accounts, so the extra cost is proportional to how much a
+channel's actual mix of content pushes reels out of the discovery window.
+
 IMPORTANT — Apify actor output schemas are not standardized across actors
 and change when actor authors update them. ``normalize_instagram_item``
 below is written against the commonly-used ``apify/instagram-scraper`` and
@@ -63,6 +83,27 @@ class ApifyInstagramClient:
             "directUrls": [f"https://www.instagram.com/{username}/"],
             "resultsType": "posts",
             "resultsLimit": max_posts,
+        }
+        run = self._client.actor(self.actor_id).call(run_input=run_input)
+        self.runs_started += 1
+        dataset_id = run["defaultDatasetId"]
+        return list(self._client.dataset(dataset_id).iterate_items())
+
+    def fetch_posts_by_url(self, urls: list[str]) -> list[dict]:
+        """
+        Refreshes specific already-known post/reel URLs, regardless of
+        where (or whether) they currently sit in the account's timeline —
+        the Instagram equivalent of scrapers/youtube.py's batched
+        ``videos.list`` refresh call. See this module's docstring for why
+        ``fetch_profile_posts`` alone isn't enough to keep the
+        overperformance baseline's trailing window current.
+        """
+        if not urls:
+            return []
+        run_input: dict[str, Any] = {
+            "directUrls": urls,
+            "resultsType": "posts",
+            "resultsLimit": len(urls),
         }
         run = self._client.actor(self.actor_id).call(run_input=run_input)
         self.runs_started += 1
@@ -167,8 +208,41 @@ def parse_profile_meta(items: list[dict]) -> dict:
 @dataclass
 class ChannelScrapeStats:
     videos_upserted: int = 0
+    videos_refreshed: int = 0
     runs_started: int = 0
     errors: list[str] = field(default_factory=list)
+
+
+def _urls_needing_refresh(db: Session, channel_id: str, *, exclude_ids: set[str], limit: int) -> list[str]:
+    """
+    The channel's ``limit`` most-recently-published tracked reels that
+    ``exclude_ids`` (whatever the discovery batch already just refreshed)
+    doesn't already cover — exactly the videos the overperformance
+    baseline's trailing window would otherwise be reading stale views from.
+
+    Over-fetches by ``len(exclude_ids)`` rows before filtering: since at
+    most ``len(exclude_ids)`` of the top ``limit + len(exclude_ids)`` most
+    recent reels can be excluded, at least ``limit`` are guaranteed to
+    remain (or fewer only if the channel simply doesn't have that many
+    reels tracked yet).
+    """
+    if limit <= 0:
+        return []
+    rows = (
+        db.query(Video.id, Video.external_url)
+        .filter(Video.channel_id == channel_id, Video.format == "reel")
+        .order_by(Video.published_at.desc())
+        .limit(limit + len(exclude_ids))
+        .all()
+    )
+    urls: list[str] = []
+    for video_id, external_url in rows:
+        if video_id in exclude_ids or not external_url:
+            continue
+        urls.append(external_url)
+        if len(urls) >= limit:
+            break
+    return urls
 
 
 def scrape_channel(client: ApifyInstagramClient, db: Session, channel: Channel, *, settings) -> ChannelScrapeStats:
@@ -190,10 +264,12 @@ def scrape_channel(client: ApifyInstagramClient, db: Session, channel: Channel, 
     if meta.get("subscriber_count") is not None:
         channel.subscriber_count = meta["subscriber_count"]
 
+    discovered_ids: set[str] = set()
     for raw_item in items:
         parsed = normalize_instagram_item(raw_item, channel_id=channel.id)
         if parsed is None:
             continue
+        discovered_ids.add(parsed["id"])
         existing = db.get(Video, parsed["id"])
         if existing is None:
             db.add(Video(**parsed))
@@ -201,6 +277,43 @@ def scrape_channel(client: ApifyInstagramClient, db: Session, channel: Channel, 
             for key, value in parsed.items():
                 setattr(existing, key, value)
         stats.videos_upserted += 1
+
+    # Second call — refresh whichever of this channel's most-recently-
+    # published tracked reels the discovery batch above didn't already
+    # cover. Needs a flush first so the discovery batch's own new rows
+    # (e.g. a reel published since the last run) are visible to this
+    # query too, not just previously-committed ones.
+    db.flush()
+    stale_urls = _urls_needing_refresh(
+        db, channel.id, exclude_ids=discovered_ids, limit=settings.baseline_window_videos
+    )
+    if stale_urls:
+        try:
+            refresh_items = client.fetch_posts_by_url(stale_urls)
+        except Exception as exc:  # noqa: BLE001 — the discovery batch already staged above shouldn't be lost
+            stats.errors.append(f"Apify refresh run failed for @{username}: {exc}")
+            refresh_items = []
+        for raw_item in refresh_items:
+            parsed = normalize_instagram_item(raw_item, channel_id=channel.id)
+            if parsed is None:
+                continue
+            existing = db.get(Video, parsed["id"])
+            if existing is None:
+                # Shouldn't normally happen (these URLs came from videos we
+                # already track), but upsert rather than assume.
+                db.add(Video(**parsed))
+            else:
+                for key, value in parsed.items():
+                    setattr(existing, key, value)
+            # Folded into videos_upserted too (matching scrapers/youtube.py's
+            # scrape_channel, which counts every touched row the same way —
+            # "upserted" there already means "inserted or refreshed") so the
+            # dashboard's existing "videos upserted" total keeps meaning
+            # "total rows touched this run" for both platforms; kept as its
+            # own counter as well since it's specifically what closes the
+            # stale-baseline gap this whole call exists for.
+            stats.videos_upserted += 1
+            stats.videos_refreshed += 1
 
     db.flush()
     recompute_and_store_channel_baselines(db, channel.id, settings)

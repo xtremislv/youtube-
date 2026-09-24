@@ -91,6 +91,11 @@ What's tested and how (see each test file's own docstring for more):
   JSON and check the normalized output. No API key or network needed;
   these are the tests to extend if you rent a different Apify actor (see
   `app/scrapers/instagram.py`'s docstring) or Google changes a field name.
+- `test_instagram_scraper.py` — orchestration-level tests for
+  `scrape_channel`'s two-call discover+refresh pattern (the profile-
+  timeline call, plus a second call that re-fetches specific known post
+  URLs so a reel's view count doesn't go stale once it ages out of the
+  timeline window), using a fake Apify client — no network needed.
 - `test_api_*.py` — full HTTP requests through FastAPI's TestClient against
   an in-memory SQLite database, covering filtering/sorting/pagination,
   channel CRUD, cohorts, the scrape-trigger auth gate, and the system
