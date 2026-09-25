@@ -1,0 +1,8 @@
+# Adds test-only tooling on top of the production dependency set. Used by
+# CI (.github/workflows/backend-tests.yml) and for local development —
+# never installed into the production Docker image (backend/Dockerfile
+# installs requirements.txt only).
+-r requirements.txt
+
+pytest==9.1.1
+respx==0.23.1

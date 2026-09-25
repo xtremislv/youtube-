@@ -170,7 +170,68 @@ class ApiError extends Error {
 // no way out for the person looking at it short of reloading the page.
 const DEFAULT_TIMEOUT_MS = 20_000;
 
+// Automatic retry is deliberately GET-only: a POST/PATCH/DELETE (creating a
+// channel, triggering a scrape, toggling a setting) isn't guaranteed
+// idempotent server-side, so silently replaying one after an ambiguous
+// failure (e.g. a timeout where the server actually did process the first
+// attempt) risks a duplicate channel or a double-triggered scrape — worse
+// than just surfacing the error and letting the person's own explicit
+// "Retry" button (already wired up at every real call site) decide. A GET
+// has no such risk, and this is exactly the class of failure — Render's
+// free tier cold-starting, a flaky mobile network dropping one request out
+// of three — that a transient, load-bearing dashboard fetch should recover
+// from on its own rather than making every page section show its own error
+// state for something a moment's wait would have fixed.
+const MAX_GET_RETRIES = 2;
+const RETRY_BASE_DELAY_MS = 400;
+
+function isRetryableStatus(status: number): boolean {
+  // 502/503/504: the upstream (or Render's own proxy in front of a
+  // cold-starting free-tier service) not being ready yet — worth a beat and
+  // another try. Deliberately NOT 429 (the server is explicitly asking to
+  // slow down, not to retry immediately), not 4xx (retrying an
+  // unauthorized/bad-request/not-found response can't ever succeed), and
+  // NOT our own client-side timeout (ApiError status 0, from _requestOnce's
+  // AbortController branch above) — a request that already took the full
+  // DEFAULT_TIMEOUT_MS to fail is a real stall, not a quick blip, and
+  // immediately re-running the same 20s wait (up to MAX_GET_RETRIES times)
+  // would make a genuinely broken connection take up to a minute to
+  // surface an error instead of the ~20s it does today.
+  return status === 502 || status === 503 || status === 504;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => window.setTimeout(resolve, ms));
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const method = (init?.method ?? "GET").toUpperCase();
+  const retriesAllowed = method === "GET" ? MAX_GET_RETRIES : 0;
+
+  let attempt = 0;
+  for (;;) {
+    try {
+      return await _requestOnce<T>(path, init);
+    } catch (err) {
+      const isLastAttempt = attempt >= retriesAllowed;
+      const retryableNetworkError = !(err instanceof ApiError) && !(err instanceof DOMException && err.name === "AbortError");
+      const retryableApiError = err instanceof ApiError && isRetryableStatus(err.status);
+      if (isLastAttempt || !(retryableNetworkError || retryableApiError)) {
+        throw err;
+      }
+      // Exponential backoff with jitter (±30%) so a page that just fired off
+      // several GETs at once (channels + cohorts + system status on load)
+      // doesn't have all of them retry in lockstep against a server that's
+      // still warming up.
+      const backoff = RETRY_BASE_DELAY_MS * 2 ** attempt;
+      const jitter = backoff * (0.7 + Math.random() * 0.6);
+      await sleep(jitter);
+      attempt += 1;
+    }
+  }
+}
+
+async function _requestOnce<T>(path: string, init?: RequestInit): Promise<T> {
   // A caller-supplied signal (App.tsx's debounced video fetch cancelling a
   // superseded request) and our own timeout both need to be able to end
   // this fetch, so both are wired onto one controller rather than relying
@@ -204,7 +265,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     // Re-thrown as-is: every call site already falls back to a generic
     // "couldn't load/save" message for anything that isn't an ApiError, and
     // the cancellation case is discarded by the caller's own guard before
-    // it ever reaches a user-visible message.
+    // it ever reaches a user-visible message. request()'s retry loop above
+    // treats a caller-initiated AbortError as non-retryable (retrying a
+    // request the caller itself cancelled would defeat the cancellation).
     throw err;
   } finally {
     window.clearTimeout(timeoutId);

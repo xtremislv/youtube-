@@ -1,21 +1,78 @@
-# Pinned to the exact versions verified together (installed + full test
-# suite green) as of this project's build. Regenerate with:
-#   pip install -r requirements.in.txt && pip freeze
-# if you deliberately want to move to newer versions later.
-fastapi==0.141.1
-uvicorn[standard]==0.52.4
-SQLAlchemy==2.0.52
-psycopg[binary]==3.3.5
-alembic==1.19.1
-pydantic==2.13.5
-pydantic-settings==2.15.0
-python-dotenv==1.2.3
+# Full transitive lock — every package pip actually installs for the
+# direct dependencies in requirements.in.txt, not just the direct ones.
+#
+# This used to be a hand-pruned list of only the direct dependencies above,
+# despite the regenerate instructions saying `pip freeze` — a real
+# `pip freeze` produces ~57 lines (this file), not ~11, because it also
+# captures every transitive dependency (starlette, anyio, httpcore,
+# greenlet, google-auth, protobuf, ...). Leaving those unpinned meant a
+# fresh `pip install -r requirements.txt` was never actually guaranteed to
+# reproduce the exact environment this app was tested against, despite the
+# top-level packages themselves being exact-pinned.
+#
+# Regenerate with, from a clean virtualenv:
+#   pip install -r requirements.in.txt
+#   pip freeze > requirements.txt
+# then re-add this header comment and re-run the full test suite before
+# committing — a mechanical freeze doesn't know which combination of
+# versions is one you've actually verified.
+#
+# Test-only dependencies (pytest, respx) live in requirements-dev.txt, not
+# here — this file is installed into the production Docker image
+# (backend/Dockerfile), which has no reason to ship a test framework.
 APScheduler==3.11.3
+Mako==1.4.3
+MarkupSafe==3.0.3
+PyYAML==6.0.3
+SQLAlchemy==2.0.52
+alembic==1.19.1
+annotated-doc==0.0.5
+annotated-types==0.8.0
+anyio==4.15.1
+apify_client==2.5.1
+apify_shared==2.3.0
+certifi==2026.7.22
+cffi==2.1.1
+charset-normalizer==3.5.1
+click==8.5.0
+colorama==0.4.6
+cryptography==50.0.1
+fastapi==0.141.1
+google-api-core==2.39.0
 google-api-python-client==2.200.0
-apify-client==2.5.1
+google-auth-httplib2==0.4.2
+google-auth==2.58.1
+googleapis-common-protos==1.75.4
+greenlet==3.5.6
+h11==0.16.0
+httpcore==1.0.9
+httplib2==0.32.0
+httptools==0.8.0
 httpx==0.28.1
-
-# dev / test only (also installed in CI, not required in production image if you trim it)
-pytest==9.1.1
-pytest-asyncio==1.4.0
-respx==0.23.1
+idna==3.20
+impit==0.14.1
+more-itertools==11.1.0
+opentelemetry-api==1.44.0
+proto-plus==1.28.4
+protobuf==7.36.2
+psycopg-binary==3.3.5
+psycopg==3.3.5
+pyasn1==0.6.4
+pyasn1_modules==0.4.2
+pycparser==3.0
+pydantic-settings==2.15.0
+pydantic==2.13.5
+pydantic_core==2.46.5
+pyparsing==3.3.3
+python-dotenv==1.2.3
+requests==2.34.2
+starlette==1.7.0
+typing-inspection==0.4.4
+typing_extensions==4.16.0
+tzlocal==5.4.4
+uritemplate==4.2.0
+urllib3==2.8.0
+uvicorn==0.52.4
+uvloop==0.22.1
+watchfiles==1.3.0
+websockets==17.1

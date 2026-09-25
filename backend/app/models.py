@@ -24,6 +24,7 @@ from __future__ import annotations
 import datetime as dt
 
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     Date,
     DateTime,
@@ -78,7 +79,13 @@ class Video(Base):
     thumbnail_url: Mapped[str | None] = mapped_column(String, nullable=True)
     external_url: Mapped[str | None] = mapped_column(String, nullable=True)
 
-    views: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    # BigInteger, not Integer: a 32-bit int tops out at ~2.1 billion, and
+    # real YouTube videos have passed that (e.g. "Baby Shark Dance" is well
+    # past 15 billion) — Integer would silently overflow into an error (or,
+    # on some codecs, wrap negative) the day a tracked channel's video ever
+    # crossed that line. likes/comments stay Integer: no video has come
+    # remotely close to 2.1 billion of either.
+    views: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
     likes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     comments: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
@@ -167,7 +174,10 @@ class VideoVelocitySnapshot(Base):
     video_id: Mapped[str] = mapped_column(ForeignKey("videos.id", ondelete="CASCADE"), nullable=False)
     checkpoint_hours: Mapped[int] = mapped_column(Integer, nullable=False)
 
-    views: Mapped[int] = mapped_column(Integer, nullable=False)
+    # BigInteger for the same reason as Video.views above — this stores the
+    # same underlying YouTube view count, just captured earlier in a
+    # video's life.
+    views: Mapped[int] = mapped_column(BigInteger, nullable=False)
     likes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     comments: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
@@ -300,7 +310,10 @@ class TopicSearchCacheChannel(Base):
     video_title: Mapped[str] = mapped_column(String, nullable=False)
     video_thumbnail_url: Mapped[str | None] = mapped_column(String, nullable=True)
     video_url: Mapped[str] = mapped_column(String, nullable=False)
-    video_views: Mapped[int] = mapped_column(Integer, nullable=False)
+    # BigInteger for the same reason as Video.views above — same underlying
+    # quantity (a video's YouTube view count), just captured for a topic
+    # search result rather than a tracked channel's video.
+    video_views: Mapped[int] = mapped_column(BigInteger, nullable=False)
     video_published_at: Mapped[dt.date] = mapped_column(Date, nullable=False)
 
     # The (views / subscribers) / days_since_published ranking score that

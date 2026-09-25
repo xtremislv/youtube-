@@ -326,6 +326,22 @@ def scrape_channel(client: ApifyInstagramClient, db: Session, channel: Channel, 
                 setattr(existing, key, value)
         stats.videos_upserted += 1
 
+    if items and not discovered_ids:
+        # The actor returned something but normalize_instagram_item recognized
+        # none of it as a video/reel — almost always means its output schema
+        # has drifted from the field-name aliases _first_present looks for
+        # (see this module's docstring), not that the account genuinely
+        # posted zero reels. Without this, a scrape run still reports
+        # "success" with videos_upserted=0 and nothing else distinguishes
+        # that from "this channel just hasn't posted anything new today",
+        # even though PRODUCTION_ROADMAP.md's own troubleshooting section
+        # promises that GET /api/scrape/runs' errorMessage is where a schema
+        # shift like this shows up.
+        stats.errors.append(
+            f"Apify returned {len(items)} post(s) for @{username} but none were recognized as videos/reels — "
+            "the actor's output schema may have changed (see backend/README.md's Instagram troubleshooting notes)."
+        )
+
     # Second call — refresh whichever of this channel's most-recently-
     # published tracked reels the discovery batch above didn't already
     # cover. Needs a flush first so the discovery batch's own new rows
@@ -362,6 +378,19 @@ def scrape_channel(client: ApifyInstagramClient, db: Session, channel: Channel, 
             # stale-baseline gap this whole call exists for.
             stats.videos_upserted += 1
             stats.videos_refreshed += 1
+
+        if refresh_items and stats.videos_refreshed == 0:
+            # Same schema-drift signal as the discovery batch above, just for
+            # the targeted refresh call — this is specifically the path that
+            # keeps older tracked reels' view counts (and therefore the
+            # median/mean baseline computed from them) from going stale, so a
+            # silent failure here is the harder-to-notice half of this bug:
+            # new posts would keep appearing fine while older reels' numbers
+            # quietly froze.
+            stats.errors.append(
+                f"Apify refresh returned {len(refresh_items)} post(s) for @{username} but none were recognized "
+                "as videos/reels — the actor's output schema may have changed."
+            )
 
     db.flush()
     recompute_and_store_channel_baselines(db, channel.id, settings)

@@ -1,0 +1,79 @@
+# Free, host-agnostic scrape trigger, run on a schedule throughout the day.
+#
+# Why this exists instead of relying on the backend host's own cron: the
+# free tiers of Render/Railway/etc. either don't include cron jobs, or the
+# web service itself sleeps when idle (so an in-process APScheduler job
+# never fires — see backend/app/scheduler.py). GitHub Actions' scheduled
+# workflows are free for public repos (and free for private repos up to a
+# generous monthly minutes allowance) and don't care whether your backend
+# is asleep — the curl call below wakes it.
+#
+# Setup: in your GitHub repo, go to Settings → Secrets and variables →
+# Actions, and add:
+#   BACKEND_URL              e.g. https://your-app.onrender.com
+#   SCRAPE_TRIGGER_API_KEY   the same value as backend/.env's
+#                            SCRAPE_TRIGGER_API_KEY
+#
+# You can also trigger a run manually any time from the Actions tab
+# ("Run workflow") — handy right after adding new channels, or any time
+# you want fresher data than the schedule below gives you (no code change
+# or redeploy needed — it just calls the same endpoint on demand).
+#
+# Schedule: 6 runs/day, spaced through the day IST (India Standard Time,
+# UTC+5:30) — cron itself is always UTC, so each line below is commented
+# with the IST time it actually fires at. Both platforms run at every slot.
+# Note: YouTube's free quota (10,000 units/day) comfortably absorbs 6
+# runs/day — a run costs only a few units per channel (see
+# backend/README.md's quota section). Instagram scraping via Apify is
+# metered by paid credit instead of a free quota, so running it this often
+# will use up the $5/month free credit faster than a single daily run
+# would — if that becomes a problem, drop the "Trigger Instagram scrape"
+# step down to fewer of these slots, or move it to its own once-daily
+# workflow.
+#
+# To change the times: edit the six `cron:` lines below (each is
+# `minute hour * * *` in UTC — subtract 5:30 from the IST time you want,
+# e.g. 10:00 IST -> 04:30 UTC -> "30 4 * * *"), or just delete/add lines.
+
+name: Competitor scrape
+
+on:
+  schedule:
+    - cron: "30 4 * * *"   # 10:00 IST
+    - cron: "0 7 * * *"    # 12:30 IST
+    - cron: "30 9 * * *"   # 15:00 IST
+    - cron: "0 12 * * *"   # 17:30 IST
+    - cron: "30 14 * * *"  # 20:00 IST
+    - cron: "30 16 * * *"  # 22:00 IST
+  workflow_dispatch: {}
+
+# This job never checks out the repo or touches any GitHub resource — it
+# only sends two `curl` calls to the already-deployed backend — so the
+# GITHUB_TOKEN it's issued needs no permissions at all, rather than
+# whatever the repo/org's default (commonly read-write) would otherwise
+# hand it.
+permissions: {}
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger YouTube scrape
+        run: |
+          curl --fail --show-error --silent \
+            --max-time 120 --retry 3 --retry-delay 15 \
+            -X POST "${BACKEND_URL}/api/scrape/run?platform=youtube" \
+            -H "X-API-Key: ${SCRAPE_API_KEY}"
+        env:
+          BACKEND_URL: ${{ secrets.BACKEND_URL }}
+          SCRAPE_API_KEY: ${{ secrets.SCRAPE_TRIGGER_API_KEY }}
+
+      - name: Trigger Instagram scrape
+        run: |
+          curl --fail --show-error --silent \
+            --max-time 300 --retry 3 --retry-delay 15 \
+            -X POST "${BACKEND_URL}/api/scrape/run?platform=instagram" \
+            -H "X-API-Key: ${SCRAPE_API_KEY}"
+        env:
+          BACKEND_URL: ${{ secrets.BACKEND_URL }}
+          SCRAPE_API_KEY: ${{ secrets.SCRAPE_TRIGGER_API_KEY }}

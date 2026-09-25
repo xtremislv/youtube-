@@ -239,3 +239,65 @@ def test_scrape_channel_refresh_failure_keeps_discovery_batch_and_records_error(
     assert db_session.get(Video, "instagram:v1").views == 1000
     assert db_session.get(Video, "instagram:v2").views == 1000
     assert stats.videos_refreshed == 0
+
+
+def _raw_item_with_drifted_schema(post_id: str, *, day: int) -> dict:
+    """Shaped like a real actor item enough to have an id and a "Video" type,
+    but missing every view-count field name normalize_instagram_item knows
+    about — simulating the actor output schema having renamed that field,
+    per this module's docstring on why _first_present tries several aliases."""
+    return {
+        "id": post_id,
+        "shortCode": post_id,
+        "type": "Video",
+        "caption": f"Reel {post_id}",
+        "timestamp": f"2026-01-{day:02d}T09:00:00.000Z",
+        # Deliberately no videoPlayCount/videoViewCount/playCount/viewCount.
+    }
+
+
+def test_scrape_channel_warns_when_discovery_items_all_fail_to_parse(db_session):
+    """
+    Every item the actor returned failed normalize_instagram_item (schema
+    drift, not "this account posted nothing") — without a warning, this run
+    would report status=success with videos_upserted=0, indistinguishable
+    from a quiet day, even though backend/README.md's own troubleshooting
+    section says a 0-upserted run with real actor results is exactly the
+    "field names don't match this actor" case.
+    """
+    channel = _channel(db_session)
+    profile_items = [_raw_item_with_drifted_schema("v1", day=1), _raw_item_with_drifted_schema("v2", day=2)]
+    client = FakeApifyInstagramClient(profile_items)
+    settings = _settings()
+
+    stats = scrape_channel(client, db_session, channel, settings=settings)
+
+    assert stats.videos_upserted == 0
+    assert len(stats.errors) == 1
+    assert "none were recognized as videos/reels" in stats.errors[0]
+    assert "2 post(s)" in stats.errors[0]
+
+
+def test_scrape_channel_warns_when_refresh_items_all_fail_to_parse(db_session):
+    """Same schema-drift signal, but for the second (targeted refresh) call —
+    the path responsible for keeping older tracked reels' views from going
+    stale, so a silent failure here is easy to miss (new posts keep arriving
+    fine while old ones quietly freeze)."""
+    channel = _channel(db_session)
+    _seed_reel(db_session, channel.id, post_id="v1", day=1, views=1000)
+    _seed_reel(db_session, channel.id, post_id="v2", day=2, views=1000)
+
+    profile_items = [_raw_reel("v3", views=300, day=3)]
+    refresh_items = [_raw_item_with_drifted_schema("v2", day=2), _raw_item_with_drifted_schema("v1", day=1)]
+    client = FakeApifyInstagramClient(profile_items, refresh_items)
+    settings = _settings(baseline_window_videos=2)
+
+    stats = scrape_channel(client, db_session, channel, settings=settings)
+
+    assert stats.videos_refreshed == 0
+    assert len(stats.errors) == 1
+    assert "Apify refresh returned" in stats.errors[0]
+    assert "none were recognized as videos/reels" in stats.errors[0]
+    # The discovery batch's own new video is unaffected by the refresh call's
+    # parse failures.
+    assert db_session.get(Video, "instagram:v3").views == 300

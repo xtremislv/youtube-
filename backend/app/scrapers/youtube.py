@@ -326,7 +326,25 @@ def scrape_channel(
 
     raw_videos = client.get_videos(all_ids) if all_ids else []
     for raw_video in raw_videos:
-        parsed_video = parse_video_resource(raw_video, channel_id=channel.id)
+        # parse_video_resource assumes a normally-shaped videos.list item
+        # (e.g. it indexes snippet["publishedAt"] directly rather than
+        # .get()-ing it) — reasonable for the overwhelming majority of
+        # videos, but YouTube can return a resource missing an expected
+        # field for an edge case (a since-privated video, a livestream
+        # variant, etc.). Without this try/except, one such video anywhere
+        # in the batch raises out of scrape_channel entirely, and the
+        # per-channel try/except in scrape_service.py's _run_youtube then
+        # rolls back *every* video upserted so far in this call for this
+        # channel — a single malformed record shouldn't cost the whole
+        # channel's scrape. Recorded per-video instead, and skipped so the
+        # rest of the batch still lands.
+        try:
+            parsed_video = parse_video_resource(raw_video, channel_id=channel.id)
+        except (KeyError, ValueError, TypeError) as exc:
+            video_id = raw_video.get("id", "unknown")
+            logger.warning("Skipping unparseable video %s for channel %s: %s", video_id, channel.id, exc)
+            stats.errors.append(f"Skipped an unparseable video ({video_id}): {exc}")
+            continue
         existing = db.get(Video, parsed_video["id"])
         if existing is None:
             db.add(Video(**parsed_video))

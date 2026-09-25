@@ -52,6 +52,17 @@ body,
   --warning: #facc15;
   --tier-danger: #f87171;
   --tier-orange: #fb923c;
+  /* Overperformance-ratio tiers (see overlayRatioColor/velocityRatioColor and
+     VideoCard's overColor in App.tsx): a distinct grey for the 0.5-1x band,
+     deliberately NOT the same value as --text-muted, which reads on the same
+     cards for "no baseline yet" (ratio is null) — a video simply too new to
+     compare shouldn't look identical to one confirmed to be underperforming
+     at 0.5-1x. --tier-blue is the 2-3x band ("poppy"/vivid, not the app's own
+     --accent periwinkle, so it doesn't get mistaken for an active-state UI
+     color). Both meet WCAG AA (4.5:1+) against every card background this
+     app draws ratio text on, in both themes. */
+  --tier-grey: #94a3b8;
+  --tier-blue: #38bdf8;
   --hover-overlay: rgba(255, 255, 255, 0.05);
   /* The sticky filter bar's own translucent-blur background — tracks
      --bg-base's color per theme rather than a fixed dark value, so it
@@ -69,12 +80,23 @@ body,
   --accent-dim: rgba(106, 99, 242, 0.12);
   --text-primary: #171923;
   --text-secondary: #4a4e5c;
-  --text-muted: #70748a;
+  /* Was #70748a — measured at 4.01:1 against --bg-elevated (#edeff5), just
+     under WCAG AA's 4.5:1 minimum for normal-size text, and this variable
+     backs some of the smallest text in the app (9-11px labels). #666a7f
+     keeps the same muted role relative to --text-primary/--text-secondary
+     while clearing 4.5:1 against every light-mode background this app
+     actually uses it on (4.6:1+ measured against both #ffffff and #edeff5). */
+  --text-muted: #666a7f;
   --border: rgba(23, 25, 35, 0.12);
   --success: #15803d;
   --warning: #a16207;
   --tier-danger: #dc2626;
   --tier-orange: #c2410c;
+  /* Deepened from the dark-mode hues (same reasoning as :root above) to keep
+     4.5:1+ against white/--bg-elevated — #94a3b8/#38bdf8 as-is would fail AA
+     on a light card. */
+  --tier-grey: #475569;
+  --tier-blue: #0369a1;
   --hover-overlay: rgba(23, 25, 35, 0.05);
   --surface-translucent: rgba(255, 255, 255, 0.92);
 }
@@ -207,6 +229,16 @@ body,
 .select-custom:focus, .select-custom:hover {
   border-color: var(--accent);
   color: var(--text-primary);
+}
+/* :focus-visible (not :focus) so this only shows for keyboard/assistive-tech
+   focus, not a mouse click — the border-color change above already handles
+   mouse hover/focus and looks identical for both, which meant a keyboard
+   user tabbing through these controls had no way to tell where focus
+   actually was beyond that same subtle border tint. A visible outline ring
+   layered on top fixes that without changing the existing mouse styling. */
+.select-custom:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }
 
 input[type="date"].select-custom::-webkit-calendar-picker-indicator {

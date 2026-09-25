@@ -26,9 +26,37 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 logger = logging.getLogger(__name__)
 
 
+def _warn_about_missing_secrets(settings) -> None:
+    """
+    Every one of these has a graceful, already-correct failure mode at
+    request time — a scrape/search returns a clean 503/401 rather than a
+    crash (see app/deps.py's require_scrape_api_key and the youtube_api_key
+    checks in app/routers/scrape.py and app/routers/search.py). The problem
+    this closes isn't correctness, it's visibility: a forgotten secret in
+    Render's dashboard currently surfaces only the first time something
+    actually tries to use it — which, for SCRAPE_TRIGGER_API_KEY, could be
+    hours later when the nightly GitHub Actions cron fires and silently
+    fails. Logging it once at boot means it shows up immediately in the
+    same place a deploy's other startup logs already do, instead of only
+    being discoverable by noticing a scrape never ran.
+    """
+    if not settings.youtube_api_key:
+        logger.warning(
+            "YOUTUBE_API_KEY is not set — scraping and topic search will return a clean error until it's configured."
+        )
+    if not settings.apify_api_token:
+        logger.warning("APIFY_API_TOKEN is not set — Instagram scraping will return a clean error until it's configured.")
+    if not settings.scrape_trigger_api_key:
+        logger.warning(
+            "SCRAPE_TRIGGER_API_KEY is not set — POST /api/scrape/run and /api/scrape/check-velocity "
+            "(the scheduled GitHub Actions cron calls) will fail closed with a 503 until it's configured."
+        )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
+    _warn_about_missing_secrets(settings)
     start_scheduler(settings)
     yield
     stop_scheduler()

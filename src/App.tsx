@@ -372,11 +372,11 @@ function ToggleSwitch({ checked, onChange, disabled, label }: { checked: boolean
       onClick={onChange}
       disabled={disabled}
       className="relative shrink-0 transition-colors disabled:opacity-50 disabled:cursor-wait"
-      style={{ width: 34, height: 18, borderRadius: 999, background: checked ? "var(--accent)" : "var(--bg-active)", border: "1px solid var(--border)" }}
+      style={{ width: 38, height: 20, borderRadius: 999, background: checked ? "var(--accent)" : "var(--bg-active)", border: "1px solid var(--border)" }}
     >
       <span
         className="absolute rounded-full transition-transform"
-        style={{ width: 12, height: 12, top: 2, left: 2, background: checked ? "var(--on-accent)" : "var(--text-muted)", transform: checked ? "translateX(16px)" : "translateX(0)" }}
+        style={{ width: 14, height: 14, top: 3, left: 3, background: checked ? "var(--on-accent)" : "var(--text-muted)", transform: checked ? "translateX(18px)" : "translateX(0)" }}
       />
     </button>
   );
@@ -392,7 +392,17 @@ interface SidebarProps {
   setActiveSection: (s: string) => void;
   overperformBadge: number | null;
   cohorts: CohortSummary[];
+  // Distinguishes "GET /api/channels/cohorts failed" from "no cohorts exist
+  // yet" — both used to render as the same empty list with no way to tell
+  // which one you were looking at, or any way to retry short of reloading
+  // the page.
+  cohortsError: string | null;
+  onRetryCohorts: () => void;
   quotaPct: number | null;
+  // Same distinction for the API Quota widget: a failed GET /api/system/
+  // status used to render identically to "no quota data yet" ("—").
+  quotaError: string | null;
+  onRetryQuota: () => void;
   instagramScrapingEnabled: boolean | null;
   onToggleInstagramScraping: () => void;
   togglingScraper: boolean;
@@ -406,7 +416,11 @@ function Sidebar({
   setActiveSection,
   overperformBadge,
   cohorts,
+  cohortsError,
+  onRetryCohorts,
   quotaPct,
+  quotaError,
+  onRetryQuota,
   instagramScrapingEnabled,
   onToggleInstagramScraping,
   togglingScraper,
@@ -485,7 +499,14 @@ function Sidebar({
           <span className="text-[10px] tracking-widest uppercase" style={{ color: "var(--text-muted)", fontFamily: "Lora, serif" }}>Saved Cohorts</span>
           <svg width="8" height="8" viewBox="0 0 8.16667 8.16667" fill="none"><path d={svgPaths.p10ad69c0} fill="var(--accent-light)" /></svg>
         </div>
-        {cohorts.length === 0 ? (
+        {cohortsError ? (
+          <div className="px-3 py-2 text-xs" style={{ color: "var(--text-muted)" }}>
+            <div style={{ color: "var(--tier-danger)" }}>Couldn't load cohorts.</div>
+            <button onClick={onRetryCohorts} className="underline mt-0.5" style={{ color: "var(--accent-light)" }}>
+              Retry
+            </button>
+          </div>
+        ) : cohorts.length === 0 ? (
           <div className="px-3 py-2 text-xs" style={{ color: "var(--text-muted)" }}>
             Tag channels with a cohort in Add Channel to group them here.
           </div>
@@ -543,7 +564,7 @@ function Sidebar({
       <div className="p-2 shrink-0">
         <div className="rounded-xl p-3" style={{ background: "var(--bg-card)" }}>
           <div className="flex items-center justify-between mb-2">
-            <span className="text-[10px] tracking-widest uppercase" style={{ color: "var(--text-secondary)", fontFamily: "Lora, serif" }}>API Quota</span>
+            <h2 className="text-[10px] tracking-widest uppercase" style={{ color: "var(--text-secondary)", fontFamily: "Lora, serif" }}>API Quota</h2>
             <span className="text-xs font-bold" style={{ color: "var(--text-primary)", fontFamily: "JetBrains Mono, monospace" }}>
               {quotaPct == null ? "—" : `${quotaPct}%`}
             </span>
@@ -551,10 +572,19 @@ function Sidebar({
           <div className="h-1.5 rounded-full overflow-hidden" style={{ background: "var(--bg-active)" }}>
             <div className="h-full rounded-full" style={{ width: `${quotaPct ?? 0}%`, background: "var(--accent-light)" }} />
           </div>
-          <div className="flex items-center justify-between mt-2">
-            <span className="text-[11px]" style={{ color: "var(--text-muted)", fontFamily: "Lora, serif" }}>YouTube Data API, today</span>
-            <svg width="11" height="9" viewBox="0 0 11.6676 9.33333" fill="none"><path d={svgPaths.p1cccc530} fill="var(--text-muted)" /></svg>
-          </div>
+          {quotaError ? (
+            <div className="flex items-center justify-between mt-2">
+              <span className="text-[11px]" style={{ color: "var(--tier-danger)" }}>Couldn't load quota.</span>
+              <button onClick={onRetryQuota} className="text-[11px] underline" style={{ color: "var(--accent-light)" }}>
+                Retry
+              </button>
+            </div>
+          ) : (
+            <div className="flex items-center justify-between mt-2">
+              <span className="text-[11px]" style={{ color: "var(--text-muted)", fontFamily: "Lora, serif" }}>YouTube Data API, today</span>
+              <svg width="11" height="9" viewBox="0 0 11.6676 9.33333" fill="none"><path d={svgPaths.p1cccc530} fill="var(--text-muted)" /></svg>
+            </div>
+          )}
         </div>
       </div>
 
@@ -587,7 +617,7 @@ function NavIcon({ icon, active }: { icon: string; active: boolean }) {
 
 // ─── Notification Panel ───────────────────────────────────────────────────────
 
-function NotificationPanel({ videos, loading, error, onClose }: { videos: Video[]; loading: boolean; error?: string | null; onClose: () => void }) {
+function NotificationPanel({ videos, loading, error, onClose, onRetry }: { videos: Video[]; loading: boolean; error?: string | null; onClose: () => void; onRetry: () => void }) {
   const topVideos = videos.slice(0, 5);
   const ytCount = videos.filter(v => v.platform === "youtube").length;
   const igCount = videos.filter(v => v.platform === "instagram").length;
@@ -601,8 +631,8 @@ function NotificationPanel({ videos, loading, error, onClose }: { videos: Video[
     <div className="absolute right-0 top-12 z-50 w-80 rounded-xl overflow-hidden shadow-2xl"
       style={{ background: "var(--bg-card)", border: "1px solid var(--border)" }}>
       <div className="flex items-center justify-between px-4 py-3" style={{ borderBottom: "1px solid var(--border)" }}>
-        <span className="text-sm font-semibold" style={{ color: "var(--text-primary)", fontFamily: "Lora, serif" }}>Performance Overview</span>
-        <button onClick={onClose} className="opacity-50 hover:opacity-100 transition-opacity" style={{ color: "var(--text-secondary)" }}>
+        <h2 className="text-sm font-semibold" style={{ color: "var(--text-primary)", fontFamily: "Lora, serif" }}>Performance Overview</h2>
+        <button onClick={onClose} aria-label="Close" className="p-1 -m-1 opacity-50 hover:opacity-100 transition-opacity" style={{ color: "var(--text-secondary)" }}>
           <XIcon size={12} />
         </button>
       </div>
@@ -612,7 +642,10 @@ function NotificationPanel({ videos, loading, error, onClose }: { videos: Video[
       ) : error ? (
         <div className="px-4 py-6 text-xs text-center" style={{ color: "var(--text-muted)" }}>
           <div className="mb-1" style={{ color: "var(--tier-danger)" }}>Couldn't load this.</div>
-          {error}
+          <div>{error}</div>
+          <button onClick={onRetry} className="mt-2 underline text-xs" style={{ color: "var(--accent-light)" }}>
+            Retry
+          </button>
         </div>
       ) : videos.length === 0 ? (
         <div className="px-4 py-6 text-xs text-center" style={{ color: "var(--text-muted)" }}>
@@ -659,7 +692,7 @@ function NotificationPanel({ videos, loading, error, onClose }: { videos: Video[
             <div className="flex flex-col gap-2">
               {topVideos.map(v => (
                 <div key={v.id} className="flex items-center gap-2">
-                  <span className="text-[10px] w-7 shrink-0 font-mono font-bold" style={{ color: "var(--success)" }}>{fmtRatio(v.overperformRatioMedian)}</span>
+                  <span className="text-[10px] w-7 shrink-0 font-mono font-bold" style={{ color: velocityRatioColor(v.overperformRatioMedian) }}>{fmtRatio(v.overperformRatioMedian)}</span>
                   <span className="text-xs truncate flex-1" style={{ color: "var(--text-secondary)", fontFamily: "Lora, serif" }}>{v.title}</span>
                   <span className={`text-[10px] px-1.5 rounded-sm ${v.platform === "youtube" ? "badge-yt" : "badge-ig"}`}>
                     {v.platform === "youtube" ? "YT" : "IG"}
@@ -904,7 +937,7 @@ function FilterBar({ filters, setFilters, viewMode, setViewMode, shownCount, tot
       {/* Views threshold — the "optional benchmark": set it and the grid
           below only shows videos that crossed it. */}
       <div className="relative shrink-0">
-        <input type="number" placeholder="Min views (optional)" value={filters.viewsThreshold}
+        <input type="number" placeholder="Min views (optional)" aria-label="Minimum views" value={filters.viewsThreshold}
           onChange={e => set("viewsThreshold")(e.target.value)}
           className="select-custom text-xs w-40 pr-3" style={{ fontFamily: "JetBrains Mono, monospace" }} />
       </div>
@@ -977,11 +1010,11 @@ function FilterBar({ filters, setFilters, viewMode, setViewMode, shownCount, tot
 
       {/* View mode */}
       <div className="flex rounded-lg overflow-hidden shrink-0" style={{ border: "1px solid var(--border)" }}>
-        <button onClick={() => setViewMode("grid")} className="p-1.5 transition-colors"
+        <button onClick={() => setViewMode("grid")} aria-label="Grid view" aria-pressed={viewMode === "grid"} className="p-2 transition-colors"
           style={{ background: viewMode === "grid" ? "var(--bg-active)" : "var(--bg-elevated)", color: viewMode === "grid" ? "var(--accent-light)" : "var(--text-muted)" }}>
           <GridIcon />
         </button>
-        <button onClick={() => setViewMode("list")} className="p-1.5 transition-colors"
+        <button onClick={() => setViewMode("list")} aria-label="List view" aria-pressed={viewMode === "list"} className="p-2 transition-colors"
           style={{ background: viewMode === "list" ? "var(--bg-active)" : "var(--bg-elevated)", color: viewMode === "list" ? "var(--accent-light)" : "var(--text-muted)" }}>
           <ListIcon />
         </button>
@@ -998,12 +1031,20 @@ function FilterBar({ filters, setFilters, viewMode, setViewMode, shownCount, tot
 // thumbnail image regardless of the site's own light/dark theme — so its
 // text needs fixed, always-bright colors rather than the theme-adaptive
 // ones everything else on the card uses.
+// Five tiers: <0.5x red, 0.5-1x grey, 1-2x green, 2-3x blue, 3x+ gold — same
+// hex values as the --tier-grey/--tier-blue/--success/--warning/--tier-danger
+// dark-mode custom properties in index.css (this overlay is fixed-dark
+// regardless of theme, so it can't reference the theme-adaptive variables
+// directly). "#a8adc0" (no-baseline grey) is deliberately a different shade
+// from the 0.5-1x tier's grey so "too new to have a baseline yet" doesn't
+// read the same as "confirmed underperforming at 0.5-1x".
 function overlayRatioColor(ratio: number | null): string {
   if (ratio == null) return "#a8adc0";
-  if (ratio < 1) return "#f87171";
-  if (ratio >= 3) return "#4ade80";
-  if (ratio >= 2) return "#facc15";
-  return "#fb923c";
+  if (ratio < 0.5) return "#f87171";
+  if (ratio < 1) return "#94a3b8";
+  if (ratio < 2) return "#4ade80";
+  if (ratio < 3) return "#38bdf8";
+  return "#facc15";
 }
 
 // Same thresholds as VideoCard's overColor below, factored out so
@@ -1012,10 +1053,11 @@ function overlayRatioColor(ratio: number | null): string {
 // eventual lifetime ratio should never look like two different scales.
 function velocityRatioColor(ratio: number | null | undefined): string {
   if (ratio == null) return "var(--text-muted)";
-  if (ratio < 1) return "var(--tier-danger)";
-  if (ratio >= 3) return "var(--success)";
-  if (ratio >= 2) return "var(--warning)";
-  return "var(--tier-orange)";
+  if (ratio < 0.5) return "var(--tier-danger)";
+  if (ratio < 1) return "var(--tier-grey)";
+  if (ratio < 2) return "var(--success)";
+  if (ratio < 3) return "var(--tier-blue)";
+  return "var(--warning)";
 }
 
 // A placeholder shaped like VideoCard itself (same thumbnail aspect ratio,
@@ -1065,10 +1107,11 @@ const VideoCard = React.memo(function VideoCard({ video, mode, metric = "average
   // overlayRatioColor above for the one place that must NOT adapt.
   const overColor =
     ratio == null ? "var(--text-muted)"
-    : ratio < 1 ? "var(--tier-danger)"   // underperforming vs. baseline — always red, regardless of tier below
-    : ratio >= 3 ? "var(--success)"
-    : ratio >= 2 ? "var(--warning)"
-    : "var(--tier-orange)";
+    : ratio < 0.5 ? "var(--tier-danger)"   // well underperforming vs. baseline
+    : ratio < 1 ? "var(--tier-grey)"       // mildly underperforming vs. baseline
+    : ratio < 2 ? "var(--success)"
+    : ratio < 3 ? "var(--tier-blue)"
+    : "var(--warning)";
   const baselineLabel = metric === "median" ? "vs median" : "vs avg";
   // Thumbnail URLs come straight from YouTube's/Instagram's CDN and can 404 or
   // time out well after the video was scraped (same staleness issue as
@@ -1082,7 +1125,7 @@ const VideoCard = React.memo(function VideoCard({ video, mode, metric = "average
 
   if (mode === "list") {
     return (
-      <Wrapper {...(wrapperProps as any)} className="video-card flex items-center gap-4 p-3 cursor-pointer group">
+      <Wrapper {...(wrapperProps as any)} className="video-card flex flex-wrap items-center gap-4 p-3 cursor-pointer group">
         <div className="relative shrink-0 rounded-lg overflow-hidden w-32 h-20" style={{ background: "var(--bg-elevated)" }}>
           {thumb ? <img src={thumb} alt={video.title} className="size-full object-cover" loading="lazy" onError={() => setThumbFailed(true)} /> : null}
           <div className="absolute bottom-1 right-1 text-[10px] px-1 rounded font-mono" style={{ background: "rgba(0,0,0,0.75)", color: "#fff" }}>
@@ -1095,7 +1138,7 @@ const VideoCard = React.memo(function VideoCard({ video, mode, metric = "average
           </div>
         </div>
 
-        <div className="flex-1 min-w-0">
+        <div className="flex-1 min-w-[160px]">
           <div className="text-sm font-semibold truncate mb-1" style={{ color: "var(--text-primary)", fontFamily: "Lora, serif" }}>{video.title}</div>
           <div className="flex items-center gap-3 flex-wrap">
             <span className="text-xs" style={{ color: "var(--text-muted)", fontFamily: "Lora, serif" }}>{video.channelName}</span>
@@ -1110,7 +1153,7 @@ const VideoCard = React.memo(function VideoCard({ video, mode, metric = "average
           </div>
         </div>
 
-        <div className="flex items-center gap-6 shrink-0">
+        <div className="flex flex-wrap items-center gap-3 sm:gap-6 shrink-0">
           <div className="text-right">
             <div className="text-sm font-bold font-mono" style={{ color: "var(--text-primary)" }}>{fmtViews(video.views)}</div>
             <div className="text-[10px]" style={{ color: "var(--text-muted)" }}>views</div>
@@ -1218,7 +1261,7 @@ function ChartPanel({ videos, metric }: { videos: Video[]; metric: OverperformMe
     <div className="mx-5 mb-4 rounded-xl p-4" style={{ background: "var(--bg-card)", border: "1px solid var(--border)" }}>
       <div className="flex items-center justify-between mb-4">
         <div>
-          <div className="text-sm font-semibold" style={{ color: "var(--text-primary)", fontFamily: "Lora, serif" }}>Overperformance by Channel</div>
+          <h2 className="text-sm font-semibold" style={{ color: "var(--text-primary)", fontFamily: "Lora, serif" }}>Overperformance by Channel</h2>
           <div className="text-xs" style={{ color: "var(--text-muted)" }}>Ratio vs channel {metric === "median" ? "median" : "average"} baseline — filtered results</div>
         </div>
         <div className="flex items-center gap-3 text-xs" style={{ fontFamily: "Lora, serif" }}>
@@ -1362,22 +1405,22 @@ function CompetitorRoster({
     <div className="p-5 max-w-3xl">
       <form onSubmit={handleAdd} className="rounded-xl p-4 mb-5 flex flex-wrap items-end gap-3" style={{ background: "var(--bg-card)", border: "1px solid var(--border)" }}>
         <div>
-          <div className="text-[10px] uppercase tracking-widest mb-1" style={{ color: "var(--text-muted)" }}>Platform</div>
-          <select value={platform} onChange={e => setPlatform(e.target.value as "youtube" | "instagram")} className="select-custom text-xs">
+          <label htmlFor="add-channel-platform" className="text-[10px] uppercase tracking-widest mb-1 block" style={{ color: "var(--text-muted)" }}>Platform</label>
+          <select id="add-channel-platform" value={platform} onChange={e => setPlatform(e.target.value as "youtube" | "instagram")} className="select-custom text-xs">
             <option value="youtube">YouTube</option>
             <option value="instagram">Instagram</option>
           </select>
         </div>
         <div className="flex-1 min-w-[200px]">
-          <div className="text-[10px] uppercase tracking-widest mb-1" style={{ color: "var(--text-muted)" }}>
+          <label htmlFor="add-channel-handle" className="text-[10px] uppercase tracking-widest mb-1 block" style={{ color: "var(--text-muted)" }}>
             {platform === "youtube" ? "@handle, channel URL, or channel ID" : "Instagram username"}
-          </div>
-          <input value={handle} onChange={e => setHandle(e.target.value)} placeholder={platform === "youtube" ? "@mkbhd" : "theverge"}
+          </label>
+          <input id="add-channel-handle" value={handle} onChange={e => setHandle(e.target.value)} placeholder={platform === "youtube" ? "@mkbhd" : "theverge"}
             className="select-custom text-xs w-full" style={{ fontFamily: "JetBrains Mono, monospace" }} />
         </div>
         <div>
-          <div className="text-[10px] uppercase tracking-widest mb-1" style={{ color: "var(--text-muted)" }}>Cohort (optional)</div>
-          <input value={cohort} onChange={e => setCohort(e.target.value)} placeholder="Tech Giants"
+          <label htmlFor="add-channel-cohort" className="text-[10px] uppercase tracking-widest mb-1 block" style={{ color: "var(--text-muted)" }}>Cohort (optional)</label>
+          <input id="add-channel-cohort" value={cohort} onChange={e => setCohort(e.target.value)} placeholder="Tech Giants"
             className="select-custom text-xs w-40" />
         </div>
         <button type="submit" disabled={submitting || !handle.trim()}
@@ -1573,6 +1616,8 @@ function ChannelStatCard({ channel: c, active, onClick, onClear }: { channel: Ch
   // channel, which collapses it right back.
   const [velocityVideos, setVelocityVideos] = useState<Video[] | null>(null);
   const [velocityLoading, setVelocityLoading] = useState(false);
+  const [velocityError, setVelocityError] = useState<string | null>(null);
+  const [velocityRetryTick, setVelocityRetryTick] = useState(0);
   // Delays the panel's own fade-in slightly past when its width starts
   // opening, so content doesn't pop in mid-slide — collapses instantly
   // instead (nothing to see once the panel's shrinking anyway).
@@ -1594,39 +1639,53 @@ function ChannelStatCard({ channel: c, active, onClick, onClear }: { channel: Ch
       return () => window.clearTimeout(t);
     }
     let cancelled = false;
+    const controller = new AbortController();
     setVelocityLoading(true);
+    setVelocityError(null);
     setShowVelocityContent(false);
     // A dedicated fetch, independent of the main grid's own filters/paging
     // (see the Filters state in App()) — this channel's most recent
     // uploads regardless of what date range or platform the rest of the
     // dashboard currently has selected, since early-velocity only ever
-    // matters for a channel's newest videos.
-    fetchVideos({
-      platform: "all",
-      channels: [c.id],
-      dateFrom: "",
-      dateTo: "",
-      viewsThreshold: "",
-      format: "all",
-      sortBy: "date",
-      limit: 6,
-    })
+    // matters for a channel's newest videos. Passes `signal` (matching the
+    // main video-grid fetch's own pattern) so expanding one channel right
+    // after another actually cancels the first request server-side instead
+    // of just discarding a response that ran to completion anyway.
+    fetchVideos(
+      {
+        platform: "all",
+        channels: [c.id],
+        dateFrom: "",
+        dateTo: "",
+        viewsThreshold: "",
+        format: "all",
+        sortBy: "date",
+        limit: 6,
+      },
+      { signal: controller.signal },
+    )
       .then(result => {
         if (cancelled) return;
         setVelocityVideos(result.videos);
         setVelocityLoading(false);
       })
-      .catch(() => {
+      .catch((err: unknown) => {
         if (cancelled) return;
+        // A cancellation (this effect re-ran, or the panel collapsed) isn't
+        // a real failure — nothing to show for it, and the next run/expand
+        // already resets velocityError to null above.
+        if (err instanceof DOMException && err.name === "AbortError") return;
         setVelocityVideos([]);
+        setVelocityError(err instanceof Error ? err.message : "Couldn't load velocity data.");
         setVelocityLoading(false);
       });
     const showTimer = window.setTimeout(() => !cancelled && setShowVelocityContent(true), 140);
     return () => {
       cancelled = true;
+      controller.abort();
       window.clearTimeout(showTimer);
     };
-  }, [active, isYouTube, c.id]);
+  }, [active, isYouTube, c.id, velocityRetryTick]);
 
   const hasAnyCheckpoint = (velocityVideos ?? []).some(
     v => v.h1Views != null || v.h3Views != null || v.h6Views != null,
@@ -1661,8 +1720,8 @@ function ChannelStatCard({ channel: c, active, onClick, onClear }: { channel: Ch
         onClick={e => { e.stopPropagation(); onClear(); }}
         title={active ? `Close ${c.name}'s velocity panel` : `Clear ${c.name} filter`}
         aria-label={active ? `Close ${c.name}'s velocity panel` : `Clear ${c.name} filter`}
-        className="absolute top-1.5 right-1.5 flex items-center justify-center rounded-full opacity-20 group-hover:opacity-100 hover:!opacity-100 transition-opacity z-10"
-        style={{ width: 18, height: 18, background: "rgba(10,12,18,0.85)", color: "var(--text-secondary)" }}
+        className="absolute top-1 right-1 flex items-center justify-center rounded-full opacity-20 group-hover:opacity-100 hover:!opacity-100 transition-opacity z-10"
+        style={{ width: 24, height: 24, background: "rgba(10,12,18,0.85)", color: "var(--text-secondary)" }}
       >
         <XIcon size={8} />
       </button>
@@ -1731,6 +1790,17 @@ function ChannelStatCard({ channel: c, active, onClick, onClear }: { channel: Ch
             </p>
           ) : velocityLoading ? (
             <p className="text-[11px] pt-1" style={{ color: "var(--text-muted)" }}>Loading…</p>
+          ) : velocityError ? (
+            <p className="text-[11px] leading-snug pt-1" style={{ color: "var(--tier-danger)" }}>
+              {velocityError}{" "}
+              <button
+                onClick={() => setVelocityRetryTick(t => t + 1)}
+                className="underline"
+                style={{ color: "var(--accent-light)" }}
+              >
+                Retry
+              </button>
+            </p>
           ) : !hasAnyCheckpoint ? (
             <p className="text-[11px] leading-snug pt-1" style={{ color: "var(--text-muted)" }}>
               No checkpoints yet — they'll appear automatically as this channel's new uploads cross their 1h, 3h and 6h marks.
@@ -1789,13 +1859,17 @@ function TopicSearchView({ quotaBudget, quotaUsedToday }: { quotaBudget: number 
   const [query, setQuery] = useState("");
   // The page-reload path — see fetchLatestTopicSearch's docstring — reuses
   // useAsync (see src/hooks/useAsync.ts) rather than a hand-rolled
-  // fetch+loading useEffect; its error is intentionally left unread here,
-  // same as before this used the shared hook: a failed initial load falls
-  // through to the "no searches yet" empty state exactly as it always did.
+  // fetch+loading useEffect. A failed initial load is now distinguished from
+  // "no searches yet" (see initialLoadError below) rather than silently
+  // falling through to that empty state — a broken GET /api/search/latest
+  // looked identical to "you've simply never searched" before, which is
+  // misleading and gives no way to retry short of reloading the page.
   const {
     data: result,
     setData: setResult,
     loading: initialLoading,
+    error: initialLoadError,
+    reload: reloadLatestSearch,
   } = useAsync(fetchLatestTopicSearch, [], null as TopicSearchResult | null);
   const [searching, setSearching] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1842,6 +1916,7 @@ function TopicSearchView({ quotaBudget, quotaUsedToday }: { quotaBudget: number 
             value={query}
             onChange={e => setQuery(e.target.value)}
             placeholder="e.g. iPhone 17 review"
+            aria-label="Topic search query"
             className="flex-1 px-3 py-2 rounded-lg text-sm"
             style={{ background: "var(--bg-elevated)", border: "1px solid var(--border)", color: "var(--text-primary)" }}
           />
@@ -1874,6 +1949,7 @@ function TopicSearchView({ quotaBudget, quotaUsedToday }: { quotaBudget: number 
               className="select-custom text-xs w-36"
               style={{ fontFamily: "JetBrains Mono, monospace" }}
               title="Only channels with at least this many subscribers are ranked"
+              aria-label="Minimum subscribers — only channels with at least this many subscribers are ranked"
             />
           </div>
 
@@ -1939,6 +2015,14 @@ function TopicSearchView({ quotaBudget, quotaUsedToday }: { quotaBudget: number 
       ) : searching ? (
         <div className="flex flex-col items-center justify-center h-48" style={{ color: "var(--text-muted)" }}>
           <div className="text-sm" style={{ fontFamily: "Lora, serif" }}>Searching YouTube and checking channel history…</div>
+        </div>
+      ) : initialLoadError && !result ? (
+        <div className="flex flex-col items-center justify-center h-48" style={{ color: "var(--text-muted)" }}>
+          <div className="text-sm" style={{ color: "var(--tier-danger)", fontFamily: "Lora, serif" }}>Couldn't load your last search</div>
+          <div className="text-xs mt-1 max-w-sm text-center">{initialLoadError}</div>
+          <button onClick={reloadLatestSearch} className="mt-3 text-xs underline" style={{ color: "var(--accent-light)" }}>
+            Retry
+          </button>
         </div>
       ) : !result ? (
         <div className="flex flex-col items-center justify-center h-48" style={{ color: "var(--text-muted)" }}>
@@ -2111,7 +2195,12 @@ export default function App() {
     });
   }, []);
 
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  // Defaults open on desktop-width screens (unchanged prior behavior), but
+  // closed on first load on a phone-width viewport — at 240px fixed width,
+  // the sidebar previously ate most of a ~375px-wide screen before the user
+  // did anything. The toggle button in the top bar still opens/closes it
+  // from either starting point; this only changes the initial state.
+  const [sidebarOpen, setSidebarOpen] = useState(() => (typeof window === "undefined" ? true : window.innerWidth >= 768));
   const [activeSection, setActiveSection] = useState("Overperformance");
   const [notifOpen, setNotifOpen] = useState(false);
   const [viewMode, setViewMode] = useState<ViewMode>("grid");
@@ -2330,36 +2419,39 @@ export default function App() {
     return () => document.removeEventListener("mousedown", handler);
   }, []);
 
+  // Rapid clicks on the bell (close it, reopen it before the first fetch
+  // has resolved), or the panel's own "Retry" button firing a second request
+  // while the first is still in flight, used to fire overlapping requests
+  // with no way to tell which one should actually win — whichever happened
+  // to resolve last would overwrite the panel's state, even if it was the
+  // older of the two. Stamping each fetch with an incrementing id and only
+  // applying the response that still matches the latest id makes a stale
+  // response a no-op instead of a flicker/race.
+  function fetchNotifications() {
+    const requestId = ++notifRequestIdRef.current;
+    setNotifLoading(true);
+    setNotifError(null);
+    // metric: "median" matches the Overperformance page's default (see
+    // the initial filters.metric below) and app/routers/system.py's
+    // overperformCount, so the bell shows the same videos the badge
+    // count is counting rather than silently falling back to average.
+    fetchVideos({ platform: "all", channels: [], dateFrom: "", dateTo: "", viewsThreshold: "", format: "all", sortBy: "ratio", metric: "median", limit: 50 })
+      .then(result => {
+        if (notifRequestIdRef.current !== requestId) return;
+        setNotifVideos(result.videos.filter(v => v.overperformRatioMedian != null && v.overperformRatioMedian >= 2));
+        setNotifLoading(false);
+      })
+      .catch(err => {
+        if (notifRequestIdRef.current !== requestId) return;
+        setNotifError(err instanceof ApiError ? err.message : "Could not load this.");
+        setNotifLoading(false);
+      });
+  }
+
   function openNotifications() {
     setNotifOpen(o => {
       const next = !o;
-      if (next) {
-        // Rapid clicks on the bell (close it, reopen it before the first
-        // fetch has resolved) used to fire overlapping requests with no way
-        // to tell which one should actually win — whichever happened to
-        // resolve last would overwrite the panel's state, even if it was the
-        // older of the two. Stamping each open with an incrementing id and
-        // only applying the response that still matches the latest id makes
-        // a stale response a no-op instead of a flicker/race.
-        const requestId = ++notifRequestIdRef.current;
-        setNotifLoading(true);
-        setNotifError(null);
-        // metric: "median" matches the Overperformance page's default (see
-        // the initial filters.metric below) and app/routers/system.py's
-        // overperformCount, so the bell shows the same videos the badge
-        // count is counting rather than silently falling back to average.
-        fetchVideos({ platform: "all", channels: [], dateFrom: "", dateTo: "", viewsThreshold: "", format: "all", sortBy: "ratio", metric: "median", limit: 50 })
-          .then(result => {
-            if (notifRequestIdRef.current !== requestId) return;
-            setNotifVideos(result.videos.filter(v => v.overperformRatioMedian != null && v.overperformRatioMedian >= 2));
-            setNotifLoading(false);
-          })
-          .catch(err => {
-            if (notifRequestIdRef.current !== requestId) return;
-            setNotifError(err instanceof ApiError ? err.message : "Could not load this.");
-            setNotifLoading(false);
-          });
-      }
+      if (next) fetchNotifications();
       return next;
     });
   }
@@ -2372,7 +2464,11 @@ export default function App() {
         setActiveSection={setActiveSection}
         overperformBadge={systemStatus?.overperformCount ?? null}
         cohorts={cohorts}
+        cohortsError={cohortsAsync.error}
+        onRetryCohorts={cohortsAsync.reload}
         quotaPct={systemStatus?.youtubeQuotaPct ?? null}
+        quotaError={systemStatusAsync.error}
+        onRetryQuota={systemStatusAsync.reload}
         instagramScrapingEnabled={scraperSettings?.instagramScrapingEnabled ?? null}
         onToggleInstagramScraping={handleToggleInstagramScraping}
         togglingScraper={togglingScraper}
@@ -2384,15 +2480,17 @@ export default function App() {
       <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
 
         {/* Top Bar */}
-        <div className="flex items-center justify-between px-5 py-3 shrink-0" style={{ borderBottom: "1px solid var(--border)", background: "var(--bg-panel)" }}>
+        <header className="flex items-center justify-between px-5 py-3 shrink-0" style={{ borderBottom: "1px solid var(--border)", background: "var(--bg-panel)" }}>
           <div className="flex items-center gap-3">
             <button onClick={() => setSidebarOpen(o => !o)}
+              aria-label={sidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
               className="flex items-center justify-center rounded-lg size-8 transition-colors hover-surface"
               style={{ color: "var(--text-muted)", border: "1px solid var(--border)" }}>
               <MenuIcon />
             </button>
             <button onClick={() => { setActiveSection("Overperformance"); setFilters(getDefaultFilters()); setViewMode("grid"); }}
               title="Home — back to Overperformance with every filter cleared"
+              aria-label="Home — back to Overperformance with every filter cleared"
               className="flex items-center justify-center rounded-lg size-8 transition-colors hover-surface"
               style={{
                 color: activeSection === "Overperformance" ? "var(--accent-light)" : "var(--text-muted)",
@@ -2417,19 +2515,23 @@ export default function App() {
                 <span className="filter-chip active">
                   {filters.platform === "youtube" ? <YTIcon size={10} /> : <IGIcon size={10} />}
                   {filters.platform}
-                  <button onClick={() => setFilters({ ...filters, platform: "all", format: nextFormatForPlatform(filters.format, "all") })}><XIcon /></button>
+                  <button
+                    className="p-1 -m-1"
+                    aria-label="Clear platform filter"
+                    onClick={() => setFilters({ ...filters, platform: "all", format: nextFormatForPlatform(filters.format, "all") })}
+                  ><XIcon /></button>
                 </span>
               )}
               {filters.channels.length > 0 && (
                 <span className="filter-chip active">
                   {filters.channels.length} ch
-                  <button onClick={() => setFilters({ ...filters, channels: [] })}><XIcon /></button>
+                  <button className="p-1 -m-1" aria-label="Clear channel filter" onClick={() => setFilters({ ...filters, channels: [] })}><XIcon /></button>
                 </span>
               )}
               {filters.viewsThreshold && (
                 <span className="filter-chip active">
                   ≥{fmtViews(Number(filters.viewsThreshold))}
-                  <button onClick={() => setFilters({ ...filters, viewsThreshold: "" })}><XIcon /></button>
+                  <button className="p-1 -m-1" aria-label="Clear minimum views filter" onClick={() => setFilters({ ...filters, viewsThreshold: "" })}><XIcon /></button>
                 </span>
               )}
             </div>
@@ -2474,16 +2576,18 @@ export default function App() {
             {/* Notification bell */}
             <div className="relative" ref={notifRef}>
               <button onClick={openNotifications}
+                aria-label="Performance overview notifications"
                 className="flex items-center justify-center rounded-lg size-9 transition-colors hover-surface"
                 style={{ color: notifOpen ? "var(--accent-light)" : "var(--text-muted)", border: `1px solid ${notifOpen ? "var(--accent)" : "var(--border)"}` }}>
                 <BellIcon />
                 <span className="notification-dot" />
               </button>
-              {notifOpen && <NotificationPanel videos={notifVideos} loading={notifLoading} error={notifError} onClose={() => setNotifOpen(false)} />}
+              {notifOpen && <NotificationPanel videos={notifVideos} loading={notifLoading} error={notifError} onClose={() => setNotifOpen(false)} onRetry={fetchNotifications} />}
             </div>
           </div>
-        </div>
+        </header>
 
+        <main className="flex flex-col flex-1 min-h-0 overflow-hidden">
         {activeSection === "Add Channel" ? (
           <div className="flex-1 overflow-y-auto">
             <CompetitorRoster
@@ -2589,6 +2693,7 @@ export default function App() {
             </div>
           </>
         )}
+        </main>
       </div>
     </div>
   );

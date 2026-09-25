@@ -5,6 +5,7 @@
 #
 # Quick start:
 #   cp backend/.env.example backend/.env   # then fill in your API keys
+#   cp .env.example .env                   # then set a real POSTGRES_PASSWORD
 #   docker compose up -d --build
 #   docker compose exec api python scripts/seed_channels.py channels.seed.json
 #   open http://localhost:8080
@@ -15,7 +16,14 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: dashboard
-      POSTGRES_PASSWORD: dashboard
+      # No default on purpose — PRODUCTION_ROADMAP.md documents this file as
+      # a real VPS production deployment path, so a hardcoded password here
+      # would mean every self-hosted deploy of this repo runs Postgres with
+      # the same publicly-visible credential. `${VAR:?msg}` makes `docker
+      # compose up` fail fast with a clear message instead of silently
+      # starting a database anyone who's read this file could guess into.
+      # See .env.example — `cp .env.example .env` and set a real value.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD — copy .env.example to .env and fill in a real password first}
       POSTGRES_DB: dashboard
     volumes:
       - db_data:/var/lib/postgresql/data
@@ -33,8 +41,10 @@ services:
       - ./backend/.env
     environment:
       # In compose, the DB is reachable at the service name "db", not
-      # localhost — override whatever backend/.env has for local dev.
-      DATABASE_URL: postgresql+psycopg://dashboard:dashboard@db:5432/dashboard
+      # localhost — override whatever backend/.env has for local dev. Same
+      # POSTGRES_PASSWORD as the db service above (docker compose reads .env
+      # at the project root automatically, so this resolves to the same value).
+      DATABASE_URL: postgresql+psycopg://dashboard:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD — copy .env.example to .env and fill in a real password first}@db:5432/dashboard
       # docker-compose is an always-on host, so it's a good fit for the
       # in-process scheduler instead of the GitHub Actions cron workflow.
       ENABLE_INTERNAL_SCHEDULER: "true"

@@ -1,0 +1,36 @@
+# Runs the backend test suite on every push/PR. No secrets, no network,
+# no live Postgres needed — see backend/tests/conftest.py.
+name: Backend tests
+
+on:
+  push:
+    paths:
+      - "backend/**"
+      - ".github/workflows/backend-tests.yml"
+  pull_request:
+    paths:
+      - "backend/**"
+
+# Least-privilege default: this workflow only reads the repo and runs
+# pytest — it never needs to push a commit, comment on a PR, or touch any
+# other repo resource, so the GITHUB_TOKEN it's handed shouldn't be able to
+# either. Without this, a workflow gets whatever the repo/org's default
+# token permissions are (commonly read-write), which is more than this job
+# needs and a wider blast radius if a future step or a compromised action
+# in this job's dependency chain ever tried to abuse it.
+permissions:
+  contents: read
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements-dev.txt
+      - run: pytest -q

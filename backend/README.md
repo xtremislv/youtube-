@@ -41,8 +41,9 @@ backend/
     run_scrape.py                  CLI scrape trigger (alternative to HTTP)
   alembic/                       Database migrations
   tests/                         53 tests, no network/DB server required
-  requirements.txt               Pinned dependencies
-  requirements.in.txt             Unpinned — regenerate requirements.txt from this
+  requirements.txt               Pinned dependencies (production image + runtime)
+  requirements-dev.txt            requirements.txt + test tooling (pytest, respx) — use this for local dev/CI
+  requirements.in.txt             Unpinned direct deps — regenerate requirements.txt from this
   Dockerfile / docker-entrypoint.sh
   .env.example                   Every setting, documented
   channels.seed.example.json     Example input for seed_channels.py
@@ -54,7 +55,7 @@ backend/
 cd backend
 python3 -m venv .venv
 source .venv/bin/activate        # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
+pip install -r requirements-dev.txt   # requirements.txt + pytest/respx for step 2 below
 
 cp .env.example .env
 # edit .env: at minimum set DATABASE_URL to a Postgres instance you have

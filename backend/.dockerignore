@@ -1,0 +1,29 @@
+# Keeps the build context (and therefore the final image) limited to what
+# the app actually needs to run. Two concrete problems this closes:
+#
+# 1. Secrets: with no .dockerignore, `COPY . .` in the Dockerfile bakes
+#    whatever's on disk straight into an image layer — including a real
+#    backend/.env (YOUTUBE_API_KEY, APIFY_API_TOKEN, DATABASE_URL) if one
+#    exists locally when `docker build` is run, exactly as
+#    PRODUCTION_ROADMAP.md's self-hosted "Path B" quickstart has someone do
+#    from this directory. An image layer with a secret in it doesn't stop
+#    being a leak just because the final CMD never reads that file again —
+#    anyone who can pull or inspect the image can still extract it.
+# 2. Bloat/noise: without this, the build context also swept up the local
+#    .venv/, test suite, pytest cache, and docs — none of which the running
+#    container needs, and all of which just make the image bigger and the
+#    build slower.
+.env
+.env.*
+!.env.example
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.git/
+.gitignore
+tests/
+docs/
+README.md
+*.md

@@ -55,7 +55,7 @@ scrape scheduled inside the API container (06:00 server time — change
 ```bash
 cd backend
 python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
+pip install -r requirements-dev.txt   # or requirements.txt alone if you don't need to run the test suite
 cp .env.example .env
 # edit .env: paste your YOUTUBE_API_KEY; set DATABASE_URL to a Postgres
 # you have (or a free Neon one — see PRODUCTION_ROADMAP.md; or
