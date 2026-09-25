@@ -204,14 +204,14 @@ function sleep(ms: number): Promise<void> {
   return new Promise(resolve => window.setTimeout(resolve, ms));
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+async function request<T>(path: string, init?: RequestInit, timeoutMs: number = DEFAULT_TIMEOUT_MS): Promise<T> {
   const method = (init?.method ?? "GET").toUpperCase();
   const retriesAllowed = method === "GET" ? MAX_GET_RETRIES : 0;
 
   let attempt = 0;
   for (;;) {
     try {
-      return await _requestOnce<T>(path, init);
+      return await _requestOnce<T>(path, init, timeoutMs);
     } catch (err) {
       const isLastAttempt = attempt >= retriesAllowed;
       const retryableNetworkError = !(err instanceof ApiError) && !(err instanceof DOMException && err.name === "AbortError");
@@ -231,7 +231,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
 }
 
-async function _requestOnce<T>(path: string, init?: RequestInit): Promise<T> {
+async function _requestOnce<T>(path: string, init?: RequestInit, timeoutMs: number = DEFAULT_TIMEOUT_MS): Promise<T> {
   // A caller-supplied signal (App.tsx's debounced video fetch cancelling a
   // superseded request) and our own timeout both need to be able to end
   // this fetch, so both are wired onto one controller rather than relying
@@ -243,7 +243,7 @@ async function _requestOnce<T>(path: string, init?: RequestInit): Promise<T> {
     if (externalSignal.aborted) controller.abort();
     else externalSignal.addEventListener("abort", () => controller.abort(), { once: true });
   }
-  const timeoutId = window.setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
+  const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
 
   let res: Response;
   try {
@@ -375,6 +375,21 @@ export function fetchSystemStatus(): Promise<SystemStatus> {
   return request<SystemStatus>("/api/system/status");
 }
 
+// Unlike every other call in this file, a manual scrape is a genuinely
+// long-running request, not a stalled one: the backend awaits the scrape
+// synchronously before responding, and the Instagram path
+// (backend/app/scrapers/instagram.py) can spend up to APIFY_RUN_WAIT_SECS
+// (300s) per Apify actor call, with up to two such calls (discovery +
+// targeted refresh) per Instagram channel, run one channel at a time. With
+// several Instagram channels configured, this can legitimately take several
+// minutes end-to-end — DEFAULT_TIMEOUT_MS's 20s was aborting the request
+// (and showing a misleading "server took too long" error) well before the
+// backend had a chance to actually fail or succeed. 10 minutes is generous
+// enough to cover a realistic worst case while still guaranteeing the
+// button's `refreshing` state can't get stuck forever on a truly dead
+// connection (see the no-call-hangs-forever comment on DEFAULT_TIMEOUT_MS).
+const MANUAL_SCRAPE_TIMEOUT_MS = 10 * 60_000;
+
 /**
  * Kicks off a scrape right now, for the dashboard's "Refresh data" button.
  * Hits POST /api/scrape/run-manual — unlike POST /api/scrape/run (which the
@@ -385,10 +400,14 @@ export function fetchSystemStatus(): Promise<SystemStatus> {
  * if one already ran recently — callers should show `err.message` (it's
  * already a human-readable "try again in Ns" string) rather than treating
  * it like an unexpected failure.
+ *
+ * Given a much longer timeout than the rest of this file's calls — see
+ * MANUAL_SCRAPE_TIMEOUT_MS above — since the backend genuinely can take
+ * several minutes to respond while Apify runs.
  */
 export function triggerManualScrape(platform?: Exclude<Platform, "all">): Promise<ScrapeTriggerResult> {
   const params = platform ? `?platform=${platform}` : "";
-  return request<ScrapeTriggerResult>(`/api/scrape/run-manual${params}`, { method: "POST" });
+  return request<ScrapeTriggerResult>(`/api/scrape/run-manual${params}`, { method: "POST" }, MANUAL_SCRAPE_TIMEOUT_MS);
 }
 
 /**
